@@ -1,0 +1,28 @@
+{
+  "name": "inventory-server",
+  "version": "1.0.0",
+  "description": "Backend server for inventory management",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "npx nodemon index.js",
+    "export-schema": "node scripts/export-schema.js",
+    "export-users": "node scripts/export-users.js"
+  },
+  "dependencies": {
+    "cloudinary": "^2.0.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "mysql2": "^3.6.5",
+    "pdfkit": "^0.14.0"
+  },
+  "devDependencies": {
+    "axios": "^1.13.2",
+    "nodemon": "^3.0.2"
+  }
+}

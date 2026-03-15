@@ -1,0 +1,23 @@
+{
+  "company_name": "BAJRANG TRADERS",
+  "address": "SUPRIYA CINEMA ROAD, BETTIAH, W. CHAMPARAN, BIHAR- 845438",
+  "contact": "8757021391",
+  "email": "bajrangtraders10@gmail.com",
+  "business_description": "Complete solution for spare parts at wholesale prices",
+  "gstin": "10ASFPP1887P1Z9",
+  "bank": {
+    "name": "HDFC Bank",
+    "account_number": "50200055647640",
+    "ifsc_code": "HDFC0001648"
+  },
+  "terms_and_conditions": [
+    "E.& O.E.",
+    "Invoice must be paid within 30 days; otherwise, interest @ 18% per annum will be charged.",
+    "Certified that the particulars given above are true and correct."
+  ],
+  "signature": {
+    "company_name_line1": "BAJRANG TRADERS",
+    "company_name_line2": "Mr. Anoop",
+    "authorized_signatory": "Director"
+  }
+}
