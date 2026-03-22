@@ -13,12 +13,13 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
       items,
       payment_status,
       paid_amount,
-      with_gst = false,
       previous_balance_paid = 0,
       attendant_id = null,
       nozzle_id = null,
       due_date = null
     } = req.body;
+
+    const with_gst = false;
 
     if (!seller_party_id || !items || items.length === 0) {
       return res.status(400).json({ error: 'Seller party and items are required' });
@@ -277,12 +278,15 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
         );
       }
 
-      // Get current seller balance before update (for unified_transactions)
+      // Get current seller balance and due date before update (for unified_transactions / audit)
       const [sellerBeforeUpdate] = await connection.execute(
-        'SELECT balance_amount FROM seller_parties WHERE id = ?',
+        'SELECT balance_amount, due_date FROM seller_parties WHERE id = ?',
         [seller_party_id]
       );
       const balanceBeforeSale = parseFloat(sellerBeforeUpdate[0]?.balance_amount || 0);
+      const dueDateBeforeSale = sellerBeforeUpdate[0]?.due_date
+        ? String(sellerBeforeUpdate[0].due_date).slice(0, 10)
+        : null;
 
       // Update seller party balance and optionally due_date (for partial payment)
       // Logic: 
@@ -316,7 +320,24 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
           // Formula: new_balance = old_balance - actual_previous_balance_paid + new_transaction_balance
           // where new_transaction_balance = roundedSaleAmount - amountPaidTowardsNewInvoice
           const balanceAfterSale = balanceBeforeSale - actualPreviousBalancePaid + newTransactionBalance;
-          
+
+          const [dueColCheck] = await connection.execute(`
+            SELECT COUNT(*) as c FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'unified_transactions' AND COLUMN_NAME = 'previous_due_date'
+          `);
+          if (dueColCheck[0].c === 0) {
+            await connection.execute(`
+              ALTER TABLE unified_transactions
+              ADD COLUMN previous_due_date DATE NULL,
+              ADD COLUMN new_due_date DATE NULL
+            `);
+          }
+
+          const partialSetsDue =
+            payment_status === 'partially_paid' && dueDateVal;
+          const prevDueForRow = partialSetsDue ? dueDateBeforeSale : null;
+          const newDueForRow = partialSetsDue ? dueDateVal : null;
+
           // Create ONLY ONE sale transaction entry
           // This represents the entire sale transaction, even if previous balance was paid
           // Use rounded values for consistency
@@ -324,8 +345,9 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
             `INSERT INTO unified_transactions (
               party_type, party_id, transaction_type, transaction_date,
               previous_balance, transaction_amount, paid_amount, balance_after,
-              reference_id, bill_number, payment_status, created_by
-            ) VALUES (?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?)`,
+              reference_id, bill_number, payment_status, created_by,
+              previous_due_date, new_due_date
+            ) VALUES (?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               'seller',
               seller_party_id,
@@ -337,7 +359,9 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
               saleTransactionId,
               billNumber,
               payment_status,
-              (req.user?.id ? parseInt(req.user.id) : null)
+              (req.user?.id ? parseInt(req.user.id) : null),
+              prevDueForRow,
+              newDueForRow
             ]
           );
           console.log(`[INFO] Sale transaction inserted into unified_transactions (SINGLE RECORD):`);

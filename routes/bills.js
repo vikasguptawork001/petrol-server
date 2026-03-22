@@ -54,7 +54,7 @@ router.get('/:id/pdf', authenticateToken, async (req, res) => {
     transaction.previous_balance = calculatedPreviousBalance > 0.01 ? calculatedPreviousBalance : 0;
 
     const [items] = await pool.execute(
-      `SELECT si.*, i.product_name, i.product_code, i.brand, i.hsn_number, i.tax_rate 
+      `SELECT si.*, i.product_name, i.brand, i.hsn_number, i.tax_rate 
        FROM sale_items si 
        JOIN items i ON si.item_id = i.id 
        WHERE si.sale_transaction_id = ?`,
@@ -125,7 +125,7 @@ router.get('/return/:id/pdf', authenticateToken, async (req, res) => {
       
       // Get return items
       const [returnItems] = await pool.execute(
-        `SELECT ri.*, i.product_name, i.product_code, i.brand, i.hsn_number, i.tax_rate 
+        `SELECT ri.*, i.product_name, i.brand, i.hsn_number, i.tax_rate 
          FROM return_items ri 
          JOIN items i ON ri.item_id = i.id 
          WHERE ri.return_transaction_id = ?`,
@@ -277,7 +277,7 @@ router.get('/return/:id/receipt', authenticateToken, async (req, res) => {
       const returnTransaction = returnTransactions[0];
       
       const [returnItems] = await pool.execute(
-        `SELECT ri.*, i.product_name, i.product_code, i.brand, i.hsn_number, i.tax_rate 
+        `SELECT ri.*, i.product_name, i.brand, i.hsn_number, i.tax_rate 
          FROM return_items ri 
          JOIN items i ON ri.item_id = i.id 
          WHERE ri.return_transaction_id = ?`,

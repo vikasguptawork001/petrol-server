@@ -51,6 +51,8 @@ router.get('/party/:party_type/:party_id', authenticateToken, async (req, res) =
         payment_method,
         payment_status,
         notes,
+        previous_due_date,
+        new_due_date,
         created_at as transaction_timestamp 
       FROM unified_transactions
       WHERE party_type = ? AND party_id = ?

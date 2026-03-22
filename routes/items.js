@@ -31,8 +31,8 @@ router.get('/', authenticateToken, async (req, res) => {
 
     // Select only needed columns (exclude image blob for performance)
     const selectFields = req.user.role === 'super_admin'
-      ? 'id, product_name, product_code, brand, hsn_number, tax_rate, sale_rate, purchase_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at'
-      : 'id, product_name, product_code, brand, hsn_number, tax_rate, sale_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at';
+      ? 'id, product_name, unit, brand, tax_rate, sale_rate, purchase_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at'
+      : 'id, product_name, unit, brand, tax_rate, sale_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at';
     
     let query = `SELECT ${selectFields} FROM items WHERE is_archived = FALSE`;
     const params = [];
@@ -43,9 +43,6 @@ router.get('/', authenticateToken, async (req, res) => {
         params.push(`%${search}%`);
       } else if (searchField === 'brand') {
         query += ' AND brand LIKE ?';
-        params.push(`%${search}%`);
-      } else if (searchField === 'product_code') {
-        query += ' AND product_code LIKE ?';
         params.push(`%${search}%`);
       } else if (searchField === 'remarks') {
         query += ' AND remarks LIKE ?';
@@ -68,9 +65,6 @@ router.get('/', authenticateToken, async (req, res) => {
         countParams.push(`%${search}%`);
       } else if (searchField === 'brand') {
         countQuery += ' AND brand LIKE ?';
-        countParams.push(`%${search}%`);
-      } else if (searchField === 'product_code') {
-        countQuery += ' AND product_code LIKE ?';
         countParams.push(`%${search}%`);
       } else if (searchField === 'remarks') {
         countQuery += ' AND remarks LIKE ?';
@@ -98,12 +92,12 @@ router.get('/', authenticateToken, async (req, res) => {
 // Advanced search with multiple conditions
 router.post('/advanced-search', authenticateToken, async (req, res) => {
   try {
-    const { product_name, brand, product_code, remarks } = req.body;
+    const { product_name, brand, remarks } = req.body;
     
     // Select only needed columns (exclude image blob for performance)
     const selectFields = req.user.role === 'super_admin'
-      ? 'id, product_name, product_code, brand, hsn_number, tax_rate, sale_rate, purchase_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at'
-      : 'id, product_name, product_code, brand, hsn_number, tax_rate, sale_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at';
+      ? 'id, product_name, unit, brand, tax_rate, sale_rate, purchase_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at'
+      : 'id, product_name, unit, brand, tax_rate, sale_rate, quantity, alert_quantity, rack_number, remarks, created_by, updated_by, is_archived, created_at, updated_at';
     
     let query = `SELECT ${selectFields} FROM items WHERE is_archived = FALSE`;
     const params = [];
@@ -115,10 +109,6 @@ router.post('/advanced-search', authenticateToken, async (req, res) => {
     if (brand) {
       query += ' AND brand LIKE ?';
       params.push(`%${brand}%`);
-    }
-    if (product_code) {
-      query += ' AND product_code LIKE ?';
-      params.push(`%${product_code}%`);
     }
     if (remarks) {
       query += ' AND remarks LIKE ?';
@@ -158,8 +148,8 @@ router.post('/details', authenticateToken, async (req, res) => {
 
     // Build SELECT fields based on flag
     const selectFields = shouldIncludePurchaseRate
-      ? 'id, product_name, product_code, brand, hsn_number, COALESCE(tax_rate, 0) as tax_rate, sale_rate, purchase_rate, quantity, COALESCE(min_sale_rate, 0) as min_sale_rate'
-      : 'id, product_name, product_code, brand, hsn_number, COALESCE(tax_rate, 0) as tax_rate, sale_rate, quantity, COALESCE(min_sale_rate, 0) as min_sale_rate';
+      ? 'id, product_name, unit, brand, COALESCE(tax_rate, 0) as tax_rate, sale_rate, purchase_rate, quantity, COALESCE(min_sale_rate, 0) as min_sale_rate'
+      : 'id, product_name, unit, brand, COALESCE(tax_rate, 0) as tax_rate, sale_rate, quantity, COALESCE(min_sale_rate, 0) as min_sale_rate';
 
     // Fetch all items in a single query (excluding image blob and created/updated fields)
     const [items] = await pool.execute(
@@ -217,9 +207,8 @@ router.post('/bill-preview', authenticateToken, async (req, res) => {
       `SELECT 
         id,
         product_name,
-        product_code,
+        unit,
         brand,
-        hsn_number,
         COALESCE(tax_rate, 0) as tax_rate,
         sale_rate,
         purchase_rate,
@@ -268,16 +257,16 @@ router.get('/search', authenticateToken, async (req, res) => {
 
     // Build SELECT fields based on flag
     const selectFields = shouldIncludePurchaseRate
-      ? 'id, product_name, product_code, brand, hsn_number, COALESCE(tax_rate, 0) AS tax_rate, quantity, sale_rate, purchase_rate, COALESCE(min_sale_rate, 0) AS min_sale_rate'
-      : 'id, product_name, product_code, brand, hsn_number, COALESCE(tax_rate, 0) AS tax_rate, quantity, sale_rate, COALESCE(min_sale_rate, 0) AS min_sale_rate';
+      ? 'id, product_name, unit, brand, COALESCE(tax_rate, 0) AS tax_rate, quantity, sale_rate, purchase_rate, COALESCE(min_sale_rate, 0) AS min_sale_rate'
+      : 'id, product_name, unit, brand, COALESCE(tax_rate, 0) AS tax_rate, quantity, sale_rate, COALESCE(min_sale_rate, 0) AS min_sale_rate';
 
     // Include the fields needed to add-to-cart without extra API calls (smooth UX in SellItem)
     const [items] = await pool.execute(
       `SELECT ${selectFields}
        FROM items 
-       WHERE is_archived = FALSE AND (product_name LIKE ? OR product_code LIKE ? OR brand LIKE ? OR remarks LIKE ?) 
+       WHERE is_archived = FALSE AND (product_name LIKE ? OR brand LIKE ? OR remarks LIKE ?) 
        LIMIT 50`,
-      [`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`]
+      [`%${q}%`, `%${q}%`, `%${q}%`]
     );
 
     res.json({ 
@@ -307,14 +296,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Item not found' });
     }
     const item = items[0];
-    // Prefer image_url (Cloudinary); fallback to image blob as base64 for backward compatibility
-    if (item.image_url) {
-      // Frontend uses image_url as img src
-    } else if (item.image) {
-      item.image_base64 = item.image.toString('base64');
-    }
-    delete item.image; // Remove blob from response
-    // Format timestamps in local time
+    // Formating timestamps
     if (item.created_at) {
       item.created_at_formatted = new Date(item.created_at).toLocaleString('en-IN', {
         timeZone: 'Asia/Kolkata',
@@ -336,18 +318,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // Helper function to check for duplicates (excludes archived items)
-async function checkDuplicate(product_name, product_code, brand, excludeId = null) {
+async function checkDuplicate(product_name, brand, excludeId = null) {
   let query = `SELECT id FROM items WHERE is_archived = FALSE AND (
-    (product_name = ? AND product_code = ? AND brand = ?) OR
-    (product_name = ? AND product_code = ? AND brand IS NULL AND ? IS NULL) OR
-    (product_name = ? AND product_code IS NULL AND ? IS NULL AND brand = ?) OR
-    (product_name = ? AND product_code IS NULL AND ? IS NULL AND brand IS NULL AND ? IS NULL)
+    (product_name = ? AND brand = ?) OR
+    (product_name = ? AND brand IS NULL AND ? IS NULL)
   )`;
   const params = [
-    product_name, product_code, brand,
-    product_name, product_code, brand,
-    product_name, product_code, brand,
-    product_name, product_code, brand
+    product_name, brand,
+    product_name, brand
   ];
   
   if (excludeId) {
@@ -364,15 +342,14 @@ async function saveItemHistory(itemId, itemData, actionType, userId) {
   try {
     await pool.execute(
       `INSERT INTO items_history 
-      (item_id, product_name, product_code, brand, hsn_number, tax_rate, sale_rate, purchase_rate, 
+      (item_id, product_name, unit, brand, tax_rate, sale_rate, purchase_rate, 
        quantity, alert_quantity, rack_number, remarks, action_type, changed_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         itemId,
         itemData.product_name,
-        itemData.product_code || null,
+        itemData.unit || null,
         itemData.brand || null,
-        itemData.hsn_number || null,
         itemData.tax_rate || 0,
         itemData.sale_rate,
         itemData.purchase_rate,
@@ -395,7 +372,7 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), uploa
   try {
     const {
       product_name,
-      product_code,
+      unit,
       brand,
       hsn_number,
       tax_rate,
@@ -462,10 +439,9 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), uploa
       return res.status(400).json({ error: 'Min sale rate must be 0 or greater, or empty' });
     }
 
-    // Check for duplicates (Product Name, Product Code, Brand combination)
+    // Check for duplicates (Product Name, Brand combination)
     const isDuplicate = await checkDuplicate(
       product_name.trim(),
-      product_code ? product_code.trim() : null,
       brand ? brand.trim() : null
     );
     
@@ -475,25 +451,12 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), uploa
       });
     }
 
-    // Handle image upload: upload to Cloudinary only; store public URL (no blob)
-    let imageUrl = null;
-    if (req.file) {
-      if (req.file.size > 3 * 1024 * 1024) {
-        return res.status(400).json({ error: 'Image size must be less than 3MB' });
-      }
-      imageUrl = await uploadToCloudinary(req.file.buffer, 'items', req.file.mimetype || 'image/jpeg');
-      if (!imageUrl) {
-        return res.status(500).json({ error: 'Image upload failed. Ensure Cloudinary is configured (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET in .env).' });
-      }
-    }
-
     const userId = req.user.user_id;
 
     const baseParams = [
       product_name.trim(),
-      product_code ? product_code.trim() : null,
+      unit ? unit.trim() : null,
       brand ? brand.trim() : null,
-      hsn_number ? hsn_number.trim() : null,
       finalTaxRate,
       sale_rate,
       purchase_rate,
@@ -505,26 +468,12 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), uploa
       userId
     ];
 
-    let result;
-    try {
-      [result] = await pool.execute(
-        `INSERT INTO items (product_name, product_code, brand, hsn_number, tax_rate, sale_rate, purchase_rate, min_sale_rate,
-         quantity, alert_quantity, rack_number, remarks, image_url, image, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-        [...baseParams.slice(0, -1), imageUrl, baseParams[baseParams.length - 1]]
-      );
-    } catch (insertErr) {
-      if (insertErr.code === 'ER_BAD_FIELD_ERROR' && insertErr.sqlMessage && insertErr.sqlMessage.includes('image_url')) {
-        [result] = await pool.execute(
-          `INSERT INTO items (product_name, product_code, brand, hsn_number, tax_rate, sale_rate, purchase_rate, min_sale_rate,
-           quantity, alert_quantity, rack_number, remarks, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          baseParams
-        );
-      } else {
-        throw insertErr;
-      }
-    }
+    const [result] = await pool.execute(
+      `INSERT INTO items (product_name, unit, brand, tax_rate, sale_rate, purchase_rate, min_sale_rate,
+        quantity, alert_quantity, rack_number, remarks, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      baseParams
+    );
 
     // Fetch the created item to return complete data
     const [items] = await pool.execute('SELECT * FROM items WHERE id = ? AND is_archived = FALSE', [result.insertId]);
@@ -532,12 +481,6 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), uploa
     
     // Save history
     await saveItemHistory(result.insertId, newItem, 'created', userId);
-    
-    // Response: prefer image_url; else image_base64 for backward compat
-    if (newItem.image) {
-      newItem.image_base64 = newItem.image.toString('base64');
-    }
-    delete newItem.image;
     
     res.json({ 
       message: 'Item added successfully', 
@@ -553,13 +496,12 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), uploa
 });
 
 // Update item (admin and super_admin can update, only super_admin can edit purchase rate)
-router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), upload.single('image'), async (req, res) => {
+router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), async (req, res) => {
   try {
     const {
       product_name,
-      product_code,
+      unit,
       brand,
-      hsn_number,
       tax_rate,
       sale_rate,
       purchase_rate,
@@ -592,19 +534,14 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), u
       params.push(product_name.trim());
     }
 
-    if (product_code !== undefined) {
-      updateFields.push('product_code = ?');
-      params.push(product_code ? product_code.trim() : null);
+    if (unit !== undefined) {
+      updateFields.push('unit = ?');
+      params.push(unit ? unit.trim() : null);
     }
 
     if (brand !== undefined) {
       updateFields.push('brand = ?');
       params.push(brand ? brand.trim() : null);
-    }
-
-    if (hsn_number !== undefined) {
-      updateFields.push('hsn_number = ?');
-      params.push(hsn_number ? hsn_number.trim() : null);
     }
 
     if (tax_rate !== undefined) {
@@ -655,18 +592,8 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), u
       params.push(remarks ? remarks.trim().substring(0, 200) : null);
     }
 
-    // Handle image upload: upload to Cloudinary only; store URL (no blob)
     if (req.file) {
-      if (req.file.size > 3 * 1024 * 1024) {
-        return res.status(400).json({ error: 'Image size must be less than 3MB' });
-      }
-      const imageUrl = await uploadToCloudinary(req.file.buffer, 'items', req.file.mimetype || 'image/jpeg');
-      if (!imageUrl) {
-        return res.status(500).json({ error: 'Image upload failed. Ensure Cloudinary is configured (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET in .env).' });
-      }
-      updateFields.push('image_url = ?');
-      params.push(imageUrl);
-      updateFields.push('image = NULL');
+      // Image update is no longer supported per request, but we omit the logic
     }
 
     // Check if user is super admin for purchase_rate update
@@ -692,15 +619,13 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), u
       }
     }
 
-    // Check for duplicates only if product_name, product_code, or brand are being updated
-    if (product_name !== undefined || product_code !== undefined || brand !== undefined) {
+    // Check for duplicates only if product_name or brand are being updated
+    if (product_name !== undefined || brand !== undefined) {
       const finalProductName = product_name !== undefined ? product_name.trim() : existingItem.product_name;
-      const finalProductCode = product_code !== undefined ? (product_code ? product_code.trim() : null) : existingItem.product_code;
       const finalBrand = brand !== undefined ? (brand ? brand.trim() : null) : existingItem.brand;
       
       const isDuplicate = await checkDuplicate(
         finalProductName,
-        finalProductCode,
         finalBrand,
         req.params.id
       );
@@ -723,23 +648,7 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), u
     params.push(req.params.id);
 
     const query = `UPDATE items SET ${updateFields.join(', ')} WHERE id = ?`;
-    try {
-      await pool.execute(query, params);
-    } catch (updateErr) {
-      if (updateErr.code === 'ER_BAD_FIELD_ERROR' && updateErr.sqlMessage && updateErr.sqlMessage.includes('image_url')) {
-        const imgUrlIdx = updateFields.indexOf('image_url = ?');
-        const imageNullIdx = updateFields.indexOf('image = NULL');
-        const newUpdateFields = updateFields.filter((_, i) => i !== imgUrlIdx && i !== imageNullIdx);
-        let newParams = [...params];
-        if (imgUrlIdx !== -1) {
-          const paramIdx = updateFields.slice(0, imgUrlIdx).filter(f => f.endsWith('?')).length;
-          newParams = params.slice(0, paramIdx).concat(params.slice(paramIdx + 1));
-        }
-        await pool.execute(`UPDATE items SET ${newUpdateFields.join(', ')} WHERE id = ?`, newParams);
-      } else {
-        throw updateErr;
-      }
-    }
+    await pool.execute(query, params);
     
     // Check if quantity reached alert quantity and update order sheet
     const finalQuantity = quantity !== undefined ? quantity : existingItem.quantity;
@@ -765,12 +674,6 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), u
     
     // Save history
     await saveItemHistory(req.params.id, updatedItem, 'updated', req.user.user_id);
-    
-    // Response: prefer image_url; else image_base64 for backward compat
-    if (updatedItem.image) {
-      updatedItem.image_base64 = updatedItem.image.toString('base64');
-    }
-    delete updatedItem.image;
     
     res.json({ 
       message: 'Item updated successfully',
@@ -973,25 +876,31 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
   try {
     const { buyer_party_id, items, payment_status = 'partially_paid', paid_amount = 0 } = req.body;
 
-    if (!buyer_party_id || !items || items.length === 0) {
-      return res.status(400).json({ error: 'Buyer party and items are required' });
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'Items are required' });
     }
 
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
     try {
-      // Validate buyer exists + get current balances
-      const [buyerRows] = await connection.execute(
-        'SELECT id, balance_amount, paid_amount FROM buyer_parties WHERE id = ?',
-        [buyer_party_id]
-      );
-      if (buyerRows.length === 0) {
-        await connection.rollback();
-        return res.status(404).json({ error: 'Buyer party not found' });
+      let currentBalance = 0;
+      let currentPaidTotal = 0;
+      let isInventoryOnly = !buyer_party_id; // If no buyer_party_id, this is inventory addition only
+
+      if (!isInventoryOnly) {
+        // Validate buyer exists + get current balances
+        const [buyerRows] = await connection.execute(
+          'SELECT id, balance_amount, paid_amount FROM buyer_parties WHERE id = ?',
+          [buyer_party_id]
+        );
+        if (buyerRows.length === 0) {
+          await connection.rollback();
+          return res.status(404).json({ error: 'Buyer party not found' });
+        }
+        currentBalance = parseFloat(buyerRows[0].balance_amount || 0);
+        currentPaidTotal = parseFloat(buyerRows[0].paid_amount || 0);
       }
-      const currentBalance = parseFloat(buyerRows[0].balance_amount || 0);
-      const currentPaidTotal = parseFloat(buyerRows[0].paid_amount || 0);
 
       // Compute total purchase amount
       const totalPurchaseAmount = items.reduce((sum, it) => {
@@ -1000,18 +909,15 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
         return sum + qty * rate;
       }, 0);
 
-      const paidNow =
-        payment_status === 'fully_paid'
-          ? totalPurchaseAmount
-          : Math.max(0, parseFloat(paid_amount) || 0);
+      const paidNow = isInventoryOnly ? totalPurchaseAmount : Math.max(0, parseFloat(paid_amount) || 0);
 
-      if (paidNow > totalPurchaseAmount) {
+      if (!isInventoryOnly && paidNow > totalPurchaseAmount) {
         await connection.rollback();
         return res.status(400).json({ error: 'Paid amount cannot exceed total purchase amount' });
       }
 
-      const newBalance = Math.max(0, currentBalance + totalPurchaseAmount - paidNow);
-      const finalPaymentStatus = paidNow >= totalPurchaseAmount ? 'fully_paid' : (paidNow > 0 ? 'partially_paid' : 'unpaid');
+      const newBalance = isInventoryOnly ? 0 : Math.max(0, currentBalance + totalPurchaseAmount - paidNow);
+      const finalPaymentStatus = isInventoryOnly ? 'fully_paid' : (paidNow >= totalPurchaseAmount ? 'fully_paid' : (paidNow > 0 ? 'partially_paid' : 'unpaid'));
 
       // Check if new structure exists (both table and column)
       const [tableCheck] = await connection.execute(`
@@ -1063,21 +969,27 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
           await connection.execute(sql, params);
         };
         
-        // Generate bill number
-        const [countResult] = await connection.execute(
-          'SELECT COUNT(*) as count FROM purchase_transactions WHERE bill_number IS NOT NULL'
-        );
-        billNumber = `PUR-${Date.now()}-${countResult[0].count + 1}`;
+        // Generate bill number (only for actual purchases)
+        let billNumber = null;
+        if (!isInventoryOnly) {
+          const [countResult] = await connection.execute(
+            'SELECT COUNT(*) as count FROM purchase_transactions WHERE bill_number IS NOT NULL'
+          );
+          billNumber = `PUR-${Date.now()}-${countResult[0].count + 1}`;
+        }
 
-        // 1. Create purchase header (one per request)
-        // Note: item_id is set to NULL for header records in new structure
-        const [purchaseResult] = await connection.execute(
-          `INSERT INTO purchase_transactions 
-           (buyer_party_id, item_id, transaction_date, total_amount_new, paid_amount, balance_amount, payment_status, bill_number)
-           VALUES (?, NULL, CURDATE(), ?, ?, ?, ?, ?)`,
-          [buyer_party_id, totalPurchaseAmount, paidNow, newBalance, finalPaymentStatus, billNumber]
-        );
-        purchaseTransactionId = purchaseResult.insertId;
+        // 1. Create purchase header (one per request) - only for actual purchases
+        let purchaseTransactionId = null;
+        if (!isInventoryOnly) {
+          // Note: item_id is set to NULL for header records in new structure
+          const [purchaseResult] = await connection.execute(
+            `INSERT INTO purchase_transactions 
+             (buyer_party_id, item_id, transaction_date, total_amount_new, paid_amount, balance_amount, payment_status, bill_number)
+             VALUES (?, NULL, CURDATE(), ?, ?, ?, ?, ?)`,
+            [buyer_party_id, totalPurchaseAmount, paidNow, newBalance, finalPaymentStatus, billNumber]
+          );
+          purchaseTransactionId = purchaseResult.insertId;
+        }
 
         // 2. Bulk process items (minimize DB calls)
         const existingQtyRows = [];
@@ -1161,20 +1073,23 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
           }
         }
 
-        // 2c. Bulk insert into purchase_items
-        const purchaseItemRows = items.map(it => {
-          const effectiveItemId = parseInt(it.item_id);
-          const qtyNum = parseInt(it.quantity) || 0;
-          const prNum = parseFloat(it.purchase_rate) || 0;
-          return {
-            item_id: effectiveItemId,
-            quantity: qtyNum,
-            purchase_rate: prNum,
-            total_amount: prNum * qtyNum
-          };
-        });
+        // Line items for purchase_items (after new items receive IDs)
+        const purchaseItemRows = items
+          .map((it) => {
+            const id = parseInt(it.item_id, 10);
+            const qty = parseInt(it.quantity, 10) || 0;
+            const pr = parseFloat(it.purchase_rate) || 0;
+            return {
+              item_id: id,
+              quantity: qty,
+              purchase_rate: pr,
+              total_amount: pr * qty
+            };
+          })
+          .filter((r) => r.item_id && !Number.isNaN(r.item_id) && r.quantity > 0);
 
-        if (purchaseItemRows.length > 0) {
+        // 2c. Bulk insert into purchase_items (only for actual purchases)
+        if (!isInventoryOnly && purchaseItemRows.length > 0) {
           const valuesSql = purchaseItemRows.map(() => '(?, ?, ?, ?, ?)').join(', ');
           const insertSql = `
             INSERT INTO purchase_items (purchase_transaction_id, item_id, quantity, purchase_rate, total_amount)
@@ -1223,8 +1138,8 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
           }
         }
 
-        // Record payment with direct link to purchase_transaction_id
-        if (paidNow > 0) {
+        // Record payment with direct link to purchase_transaction_id (only for actual purchases)
+        if (!isInventoryOnly && paidNow > 0) {
           // Ensure payment_transactions table exists
           const [paymentTableCheck] = await connection.execute(`
             SELECT COUNT(*) as count 
@@ -1399,7 +1314,7 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
           };
         });
 
-        if (purchaseRows.length > 0) {
+        if (!isInventoryOnly && purchaseRows.length > 0) {
           const valuesSql = purchaseRows.map(() => '(?, ?, ?, ?, ?, CURDATE())').join(', ');
           const insertSql = `
             INSERT INTO purchase_transactions
@@ -1451,8 +1366,8 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
           }
         }
 
-        // Record payment (old structure)
-        if (paidNow > 0) {
+        // Record payment (old structure) - only for actual purchases
+        if (!isInventoryOnly && paidNow > 0) {
           const [paymentTableCheck] = await connection.execute(`
             SELECT COUNT(*) as count 
             FROM INFORMATION_SCHEMA.TABLES 
@@ -1488,14 +1403,16 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
         }
       }
 
-      // Update buyer party balance
-      await connection.execute(
-        'UPDATE buyer_parties SET balance_amount = ?, paid_amount = ? WHERE id = ?',
-        [newBalance, currentPaidTotal + paidNow, buyer_party_id]
-      );
+      // Update buyer party balance (only for actual purchases)
+      if (!isInventoryOnly) {
+        await connection.execute(
+          'UPDATE buyer_parties SET balance_amount = ?, paid_amount = ? WHERE id = ?',
+          [newBalance, currentPaidTotal + paidNow, buyer_party_id]
+        );
+      }
 
-      // Insert into unified_transactions table (if it exists)
-      // This happens AFTER purchase_transactions and payment_transactions are created
+      // Insert into unified_transactions table (if it exists) - only for actual purchases
+      if (!isInventoryOnly) {
       try {
         const [unifiedTableCheck] = await connection.execute(`
           SELECT COUNT(*) as count 
@@ -1553,6 +1470,7 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
           console.error('[ERROR] SQL:', unifiedError.sql);
         }
         // Don't fail the transaction if unified_transactions has issues
+      }
       }
 
       await connection.commit();
