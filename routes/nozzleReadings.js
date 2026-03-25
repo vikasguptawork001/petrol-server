@@ -11,11 +11,30 @@ function getLocalDatetime(d) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+router.get('/last/:nozzle_id', authenticateToken, async (req, res) => {
+  try {
+    const nozzle_id = parseInt(req.params.nozzle_id, 10);
+    if (!nozzle_id) return res.status(400).json({ error: 'Invalid nozzle_id' });
+    const [rows] = await pool.execute(
+      `SELECT closing_reading 
+       FROM nozzle_readings 
+       WHERE nozzle_id = ? AND closing_reading IS NOT NULL 
+       ORDER BY reading_date DESC, id DESC LIMIT 1`,
+      [nozzle_id]
+    );
+    res.json({ last_closing_reading: rows.length > 0 ? rows[0].closing_reading : '' });
+  } catch (error) {
+    console.error('Fetch last reading error:', error);
+    res.status(500).json({ error: 'Failed to fetch last reading' });
+  }
+});
+
 // Submit or upsert a daily nozzle reading (parcel: opening only first, add closing later)
 // Body: attendant_id, nozzle_id, reading_date, opening_reading? (optional if adding closing only), closing_reading?, opening_at?, closing_at?
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
+      id,
       attendant_id,
       nozzle_id,
       reading_date,
@@ -50,13 +69,16 @@ router.post('/', authenticateToken, async (req, res) => {
 
     const connection = await pool.getConnection();
     try {
-      const [existing] = await connection.execute(
-        `SELECT id, opening_reading, opening_at, closing_reading, closing_at
-         FROM nozzle_readings
-         WHERE attendant_id = ? AND nozzle_id = ? AND reading_date = ?`,
-        [attendant_id, nozzle_id, reading_date]
-      );
-      const row = existing[0];
+      let row = null;
+      if (id) {
+        const [existing] = await connection.execute(
+          `SELECT id, opening_reading, opening_at, closing_reading, closing_at
+           FROM nozzle_readings
+           WHERE id = ?`,
+          [id]
+        );
+        row = existing[0];
+      }
 
       const openingForValidation = hasOpening ? openingVal : (row && row.opening_reading != null ? parseFloat(row.opening_reading) : null);
       if (hasClosing && openingForValidation != null && closingVal <= openingForValidation) {
@@ -81,10 +103,10 @@ router.post('/', authenticateToken, async (req, res) => {
           [newOpening, newOpeningAt, newClosing, newClosingAt, row.id]
         );
       } else {
-        // Insert new: must have opening for new row (closing only not allowed without existing row)
+        // Insert new: must have opening for new row
         if (!hasOpening) {
           return res.status(400).json({
-            error: 'No existing reading for this attendant, nozzle and date. Add opening reading first.'
+            error: 'Cannot add a closing reading without an existing shift record ID. Add opening reading first.'
           });
         }
         await connection.execute(
@@ -102,13 +124,15 @@ router.post('/', authenticateToken, async (req, res) => {
         );
       }
 
+      // Fetch the newly inserted/updated row
       const [rows] = await connection.execute(
         `SELECT nr.*, a.name AS attendant_name, n.name AS nozzle_name
          FROM nozzle_readings nr
          JOIN attendants a ON a.id = nr.attendant_id
          JOIN nozzles n ON n.id = nr.nozzle_id
-         WHERE nr.attendant_id = ? AND nr.nozzle_id = ? AND nr.reading_date = ?`,
-        [attendant_id, nozzle_id, reading_date]
+         WHERE nr.id = ? OR (nr.attendant_id = ? AND nr.nozzle_id = ? AND nr.reading_date = ?)
+         ORDER BY nr.id DESC LIMIT 1`,
+        [row ? row.id : 0, attendant_id, nozzle_id, reading_date]
       );
       res.status(201).json({ reading: rows[0] });
     } finally {

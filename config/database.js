@@ -48,6 +48,8 @@ const poolConfig = {
   waitForConnections: true,
   connectionLimit: config.database.connectionLimit,
   queueLimit: config.database.queueLimit,
+  // Automatically return date/time types as strict strings instead of Date objects to preserve actual local time logic
+  dateStrings: true,
   // Set timezone to UTC to ensure consistent timestamp handling
   timezone: 'Z', // 'Z' represents UTC in mysql2
   // Connection establishment timeout only (valid for Connection)
