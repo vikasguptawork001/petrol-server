@@ -368,7 +368,7 @@ async function saveItemHistory(itemId, itemData, actionType, userId) {
 }
 
 // Add new item (only admin and super_admin)
-router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), upload.single('image'), async (req, res) => {
+router.post('/', authenticateToken, authorizeRole('admin', 'super_admin', 'sales'), upload.single('image'), async (req, res) => {
   try {
     const {
       product_name,
@@ -496,7 +496,7 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin'), uploa
 });
 
 // Update item (admin and super_admin can update, only super_admin can edit purchase rate)
-router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), async (req, res) => {
+router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin', 'sales'), async (req, res) => {
   try {
     const {
       product_name,
@@ -598,8 +598,8 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), a
 
     // Check if user is super admin for purchase_rate update
     if (purchase_rate !== undefined) {
-      if (req.user.role !== 'super_admin') {
-        return res.status(403).json({ error: 'Only super admin can update purchase rate' });
+      if (req.user.role !== 'admin' && req.user.role !== 'super_admin' && req.user.role !== 'sales') {
+        return res.status(403).json({ error: 'Only authorized users can update purchase rate' });
       }
       if (isNaN(purchase_rate) || purchase_rate < 0) {
         return res.status(400).json({ error: 'Purchase rate must be a positive number' });
@@ -689,8 +689,8 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin'), a
 // Delete item (only super admin)
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Only super admin can delete items' });
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin' && req.user.role !== 'sales') {
+      return res.status(403).json({ error: 'Only authorized users can delete items' });
     }
 
     // Get item data before archiving for history
@@ -872,7 +872,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
 
 
-router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'), async (req, res) => {
+router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin', 'sales'), async (req, res) => {
   try {
     const { buyer_party_id, items, payment_status = 'partially_paid', paid_amount = 0 } = req.body;
 
@@ -1497,8 +1497,8 @@ router.post('/purchase', authenticateToken, authorizeRole('admin', 'super_admin'
 // Get total stock amount (sum of purchase_rate * quantity) - super admin only
 router.get('/stock/total-amount', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Only super admin can view total stock amount' });
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Only admin and super admin can view total stock amount' });
     }
 
     const [result] = await pool.execute(
@@ -1517,8 +1517,8 @@ router.get('/stock/total-amount', authenticateToken, async (req, res) => {
 // Get total stock amount by brand - super admin only
 router.get('/stock/total-amount-by-brand', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Only super admin can view brand-wise stock amount' });
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Only admin and super admin can view brand-wise stock amount' });
     }
     console.log('Get total stock amount by brand request received');
 
