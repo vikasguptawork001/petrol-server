@@ -144,12 +144,90 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
+function buildNozzleReadingsFilterClause(query) {
+  const { from_date, to_date, nozzle_id, attendant_id } = query;
+  let clause = `
+    FROM nozzle_readings nr
+    JOIN attendants a ON a.id = nr.attendant_id
+    JOIN nozzles n ON n.id = nr.nozzle_id
+    WHERE 1=1
+  `;
+  const params = [];
+  if (from_date) {
+    clause += ' AND nr.reading_date >= ?';
+    params.push(from_date);
+  }
+  if (to_date) {
+    clause += ' AND nr.reading_date <= ?';
+    params.push(to_date);
+  }
+  if (nozzle_id) {
+    clause += ' AND nr.nozzle_id = ?';
+    params.push(nozzle_id);
+  }
+  if (attendant_id) {
+    clause += ' AND nr.attendant_id = ?';
+    params.push(attendant_id);
+  }
+  return { clause, params };
+}
+
+// Aggregates for the selected period (not paginated) — totals, nozzle/attendant breakdown
+router.get('/summary', authenticateToken, async (req, res) => {
+  try {
+    const { clause, params } = buildNozzleReadingsFilterClause(req.query);
+    const [aggRows] = await pool.execute(
+      `SELECT
+        COUNT(*) AS total_shifts,
+        SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN 1 ELSE 0 END) AS completed_shifts,
+        SUM(CASE WHEN nr.closing_reading IS NULL THEN 1 ELSE 0 END) AS pending_shifts,
+        COALESCE(SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN (nr.closing_reading - nr.opening_reading) ELSE 0 END), 0) AS total_sale_liters
+      ${clause}`,
+      params
+    );
+    const a = aggRows[0] || {};
+    const [nozzleRows] = await pool.execute(
+      `SELECT n.name AS name,
+        COALESCE(SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN (nr.closing_reading - nr.opening_reading) ELSE 0 END), 0) AS total_liters
+      ${clause}
+      GROUP BY nr.nozzle_id, n.name
+      ORDER BY total_liters DESC`,
+      params
+    );
+    const [attRows] = await pool.execute(
+      `SELECT a.name AS name,
+        COALESCE(SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN (nr.closing_reading - nr.opening_reading) ELSE 0 END), 0) AS total_liters
+      ${clause}
+      GROUP BY nr.attendant_id, a.name
+      ORDER BY total_liters DESC`,
+      params
+    );
+    res.json({
+      total_sale_liters: parseFloat(a.total_sale_liters) || 0,
+      total_shifts: Number(a.total_shifts) || 0,
+      completed_shifts: Number(a.completed_shifts) || 0,
+      pending_shifts: Number(a.pending_shifts) || 0,
+      by_nozzle: (nozzleRows || []).map((r) => ({
+        name: r.name,
+        total: parseFloat(r.total_liters) || 0
+      })),
+      by_attendant: (attRows || []).map((r) => ({
+        name: r.name,
+        total: parseFloat(r.total_liters) || 0
+      }))
+    });
+  } catch (error) {
+    console.error('Nozzle readings summary error:', error);
+    res.status(500).json({ error: 'Failed to load summary' });
+  }
+});
+
 // List daily nozzle readings (filter by date range, nozzle_id, attendant_id)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { from_date, to_date, nozzle_id, attendant_id, pending_closing, page = 1, limit = 50 } = req.query;
     const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
+    const limitNum = Math.min(5000, Math.max(1, parseInt(limit, 10)));
     const offset = (pageNum - 1) * limitNum;
 
     let baseQuery = `

@@ -3,6 +3,7 @@ const ExcelJS = require('exceljs');
 const pool = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { getLocalDateString } = require('../utils/dateUtils');
+const { parsePageLimit } = require('../utils/paginationParams');
 
 const router = express.Router();
 
@@ -10,9 +11,7 @@ const router = express.Router();
 router.get('/sales', authenticateToken, async (req, res) => {
   try {
     const { from_date, to_date, gst_filter, seller_party_id, nozzle_id, attendant_id, page = 1, limit = 50 } = req.query; // gst_filter: 'all', 'with_gst', 'without_gst'
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 50;
-    const offset = (pageNum - 1) * limitNum;
+    const { pageNum, limitNum, offset } = parsePageLimit(page, limit, { defaultLimit: 50, maxLimit: 5000 });
     
     let baseQuery = `FROM sale_transactions st
     JOIN seller_parties sp ON st.seller_party_id = sp.id
@@ -137,13 +136,123 @@ router.get('/sales', authenticateToken, async (req, res) => {
   }
 });
 
+/** Aggregated sales totals grouped by attendant (Manage Attendant page) */
+router.get('/sales/by-attendant', authenticateToken, async (req, res) => {
+  try {
+    let { from_date, to_date, gst_filter } = req.query;
+    if (from_date && to_date && String(from_date) > String(to_date)) {
+      const t = from_date;
+      from_date = to_date;
+      to_date = t;
+    }
+    let where = 'WHERE 1=1';
+    const params = [];
+    if (from_date) {
+      where += ' AND st.transaction_date >= ?';
+      params.push(from_date);
+    } else {
+      where += ' AND st.transaction_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+    }
+    if (to_date) {
+      where += ' AND st.transaction_date <= ?';
+      params.push(to_date);
+    }
+    if (gst_filter === 'with_gst') where += ' AND st.with_gst = 1';
+    else if (gst_filter === 'without_gst') where += ' AND st.with_gst = 0';
+
+    const [rows] = await pool.execute(
+      `SELECT
+         st.attendant_id,
+         COALESCE(a.name, 'Unassigned') AS attendant_name,
+         COUNT(*) AS bill_count,
+         COALESCE(SUM(st.total_amount), 0) AS total_sales,
+         COALESCE(SUM(st.paid_amount), 0) AS total_paid,
+         COALESCE(SUM(st.balance_amount), 0) AS total_balance
+       FROM sale_transactions st
+       LEFT JOIN attendants a ON st.attendant_id = a.id
+       ${where}
+       GROUP BY st.attendant_id, a.name
+       ORDER BY total_sales DESC, bill_count DESC`,
+      params
+    );
+
+    const normalized = rows.map((r) => ({
+      attendant_id: r.attendant_id,
+      attendant_name: r.attendant_name || 'Unassigned',
+      bill_count: parseInt(r.bill_count, 10) || 0,
+      total_sales: parseFloat(r.total_sales) || 0,
+      total_paid: parseFloat(r.total_paid) || 0,
+      total_balance: parseFloat(r.total_balance) || 0
+    }));
+
+    res.json({ rows: normalized });
+  } catch (error) {
+    console.error('Sales by attendant report error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** Aggregated sales totals grouped by nozzle (Manage Nozzle page) */
+router.get('/sales/by-nozzle', authenticateToken, async (req, res) => {
+  try {
+    let { from_date, to_date, gst_filter } = req.query;
+    if (from_date && to_date && String(from_date) > String(to_date)) {
+      const t = from_date;
+      from_date = to_date;
+      to_date = t;
+    }
+    let where = 'WHERE 1=1';
+    const params = [];
+    if (from_date) {
+      where += ' AND st.transaction_date >= ?';
+      params.push(from_date);
+    } else {
+      where += ' AND st.transaction_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+    }
+    if (to_date) {
+      where += ' AND st.transaction_date <= ?';
+      params.push(to_date);
+    }
+    if (gst_filter === 'with_gst') where += ' AND st.with_gst = 1';
+    else if (gst_filter === 'without_gst') where += ' AND st.with_gst = 0';
+
+    const [rows] = await pool.execute(
+      `SELECT
+         st.nozzle_id,
+         COALESCE(n.name, 'Unassigned') AS nozzle_name,
+         COUNT(*) AS bill_count,
+         COALESCE(SUM(st.total_amount), 0) AS total_sales,
+         COALESCE(SUM(st.paid_amount), 0) AS total_paid,
+         COALESCE(SUM(st.balance_amount), 0) AS total_balance
+       FROM sale_transactions st
+       LEFT JOIN nozzles n ON st.nozzle_id = n.id
+       ${where}
+       GROUP BY st.nozzle_id, n.name
+       ORDER BY total_sales DESC, bill_count DESC`,
+      params
+    );
+
+    const normalized = rows.map((r) => ({
+      nozzle_id: r.nozzle_id,
+      nozzle_name: r.nozzle_name || 'Unassigned',
+      bill_count: parseInt(r.bill_count, 10) || 0,
+      total_sales: parseFloat(r.total_sales) || 0,
+      total_paid: parseFloat(r.total_paid) || 0,
+      total_balance: parseFloat(r.total_balance) || 0
+    }));
+
+    res.json({ rows: normalized });
+  } catch (error) {
+    console.error('Sales by nozzle report error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Get item-wise sales report (aggregated by item)
 router.get('/sales/items', authenticateToken, async (req, res) => {
   try {
     const { from_date, to_date, gst_filter, item_query, seller_party_id, nozzle_id, attendant_id, page = 1, limit = 50 } = req.query;
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 50;
-    const offset = (pageNum - 1) * limitNum;
+    const { pageNum, limitNum, offset } = parsePageLimit(page, limit, { defaultLimit: 50, maxLimit: 5000 });
 
     let baseQuery = `
       FROM sale_items si
@@ -877,9 +986,7 @@ router.get('/sales/export', authenticateToken, async (req, res) => {
 router.get('/returns', authenticateToken, async (req, res) => {
   try {
     const { from_date, to_date, party_type, page = 1, limit = 50 } = req.query;
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 50;
-    const offset = (pageNum - 1) * limitNum;
+    const { pageNum, limitNum, offset } = parsePageLimit(page, limit, { defaultLimit: 50, maxLimit: 5000 });
     
     // Check if new structure exists (return_items table)
     const [tableCheck] = await pool.execute(`

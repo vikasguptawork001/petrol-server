@@ -16,10 +16,15 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
       previous_balance_paid = 0,
       attendant_id = null,
       nozzle_id = null,
-      due_date = null
+      due_date = null,
+      with_gst: withGstBody = false
     } = req.body;
 
-    const with_gst = false;
+    const with_gst =
+      withGstBody === true ||
+      withGstBody === 1 ||
+      withGstBody === '1' ||
+      withGstBody === 'true';
 
     if (!seller_party_id || !items || items.length === 0) {
       return res.status(400).json({ error: 'Seller party and items are required' });
@@ -33,10 +38,20 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
     await connection.beginTransaction();
 
     try {
+      const [saleItemsUnitCol] = await connection.execute(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sale_items' AND COLUMN_NAME = 'unit'
+      `);
+      if (saleItemsUnitCol.length === 0) {
+        await connection.execute(
+          'ALTER TABLE sale_items ADD COLUMN unit VARCHAR(50) DEFAULT NULL AFTER discount_percentage'
+        );
+      }
+
       // Petrol/Diesel (product_code PETROL-001, DIESEL-001): quantity is optional (can be 0). Filter to only items with qty > 0 for processing.
       const itemIds = items.map(item => item.item_id);
       const [allItemData] = await connection.execute(
-        `SELECT id, product_name, product_code, quantity, sale_rate, tax_rate, alert_quantity, updated_at 
+        `SELECT id, product_name, product_code, quantity, sale_rate, tax_rate, alert_quantity, updated_at, unit 
          FROM items 
          WHERE id IN (${itemIds.map(() => '?').join(',')}) AND is_archived = FALSE`,
         itemIds
@@ -224,6 +239,14 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
         const newQuantity = itemData.quantity - item.quantity;
         
         // Prepare sale item insert
+        const fromReq =
+          item.unit != null && String(item.unit).trim() !== '' ? String(item.unit).trim() : '';
+        const fromMaster =
+          itemData?.unit != null && String(itemData.unit).trim() !== ''
+            ? String(itemData.unit).trim()
+            : '';
+        const lineUnit = (fromReq || fromMaster || 'PCS').slice(0, 50);
+
         saleItemInserts.push([
           saleTransactionId, 
           item.item_id, 
@@ -232,7 +255,8 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
           item.itemSubtotal, 
           item.itemDiscount || 0, 
           item.discount_type || 'amount', 
-          item.discount_percentage || null
+          item.discount_percentage || null,
+          lineUnit
         ]);
         
         // Prepare item quantity update (preserve updated_at)
@@ -254,10 +278,10 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
       
       // Batch insert all sale items
       if (saleItemInserts.length > 0) {
-        const placeholders = saleItemInserts.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+        const placeholders = saleItemInserts.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
         const values = saleItemInserts.flat();
         await connection.execute(
-          `INSERT INTO sale_items (sale_transaction_id, item_id, quantity, sale_rate, total_amount, discount, discount_type, discount_percentage) VALUES ${placeholders}`,
+          `INSERT INTO sale_items (sale_transaction_id, item_id, quantity, sale_rate, total_amount, discount, discount_type, discount_percentage, unit) VALUES ${placeholders}`,
           values
         );
       }

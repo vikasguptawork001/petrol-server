@@ -47,6 +47,24 @@ const formatCurrency = (amount) => {
   return parseFloat(amount).toFixed(2);
 };
 
+/** Unit shown on bill lines: prefers snapshot on sale_items, then items master, then PCS */
+const formatLineUnitForPdf = (item) => {
+  const raw =
+    item.line_unit != null && String(item.line_unit).trim() !== ''
+      ? String(item.line_unit).trim()
+      : item.unit != null && String(item.unit).trim() !== ''
+        ? String(item.unit).trim()
+        : 'PCS';
+  return raw.length > 14 ? `${raw.slice(0, 12)}…` : raw;
+};
+
+const summarizeUnitsForBillTotals = (items) => {
+  const labels = items.map((i) => formatLineUnitForPdf(i).replace(/…$/, ''));
+  const uniq = [...new Set(labels)];
+  if (uniq.length === 1) return uniq[0];
+  return 'mixed';
+};
+
 // Helper function to add page numbers to PDF footer
 function addPageNumbers(doc, margin, pageWidth, pageHeight) {
   // Return function to add final page numbers (when total is known)
@@ -404,7 +422,7 @@ const generateBillPDF = (transaction, items, res) => {
       doc.text(quantity.toString(), cols[colIndex].x + 2, currentY, { width: cols[colIndex].width - 4, align: cols[colIndex].align });
       colIndex++;
       
-      doc.text('PCS', cols[colIndex].x + 2, currentY, { width: cols[colIndex].width - 4, align: cols[colIndex].align });
+      doc.text(formatLineUnitForPdf(item), cols[colIndex].x + 2, currentY, { width: cols[colIndex].width - 4, align: cols[colIndex].align });
       colIndex++;
       
       doc.text(formatCurrency(saleRate), cols[colIndex].x + 2, currentY, { width: cols[colIndex].width - 4, align: cols[colIndex].align });
@@ -551,10 +569,15 @@ const generateBillPDF = (transaction, items, res) => {
     doc.text(`Rs.${formatCurrency(todaysTotalAmount)}`, rightEdge - 80, currentY, { width: 80, align: 'right' });
     currentY += 15;
     
-    // Total Quantity
+    // Total Quantity (units per line may differ; show sum + label when mixed)
+    const unitsSummary = summarizeUnitsForBillTotals(items);
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
     doc.text('Total Quantity:', margin, currentY);
-    doc.text(`${totalQty.toFixed(2)} PCS`, rightEdge - 80, currentY, { width: 80, align: 'right' });
+    const qtyRight =
+      unitsSummary === 'mixed'
+        ? `${totalQty.toFixed(2)} (mixed units)`
+        : `${totalQty.toFixed(2)} ${unitsSummary}`;
+    doc.text(qtyRight, rightEdge - 80, currentY, { width: 80, align: 'right' });
     currentY += 15;
     
     // Previous balance
@@ -906,7 +929,7 @@ const generateReturnBillPDF = (returnTransaction, returnItems, party, res) => {
     // ========== TOTALS SECTION ==========
     currentY += 10;
     doc.fontSize(9).font('Helvetica-Bold');
-    doc.text(`Total Quantity: ${totalQty.toFixed(2)} PCS`, margin, currentY);
+    doc.text(`Total Quantity: ${totalQty.toFixed(2)}`, margin, currentY);
     doc.text('Total Return Amount:', rightEdge - 120, currentY, { width: 80, align: 'right' });
     doc.text(`Rs.${formatCurrency(totalAmount)}`, rightEdge - 40, currentY, { width: 40, align: 'right' });
     

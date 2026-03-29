@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { parsePageLimit } = require('../utils/paginationParams');
 
 const router = express.Router();
 
@@ -13,10 +14,8 @@ router.get('/party/:party_type/:party_id', authenticateToken, async (req, res) =
   try {
     const { party_type, party_id } = req.params;
     const { page = 1, limit = 20, from_date, to_date, transaction_type } = req.query;
-    
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 20;
-    const offset = (pageNum - 1) * limitNum;
+
+    const { pageNum, limitNum, offset } = parsePageLimit(page, limit, { defaultLimit: 20, maxLimit: 200 });
 
     // Validate party_type
     if (!['seller', 'buyer'].includes(party_type)) {
@@ -41,11 +40,12 @@ router.get('/party/:party_type/:party_id', authenticateToken, async (req, res) =
         party_type,
         party_id,
         transaction_type,
-        transaction_date as date,
+        transaction_date AS date,
+        transaction_date AS transaction_date,
         previous_balance,
-        transaction_amount as this_transaction_amount,
+        transaction_amount,
         paid_amount,
-        balance_after ,
+        balance_after,
         reference_id,
         bill_number,
         payment_method,
@@ -53,7 +53,7 @@ router.get('/party/:party_type/:party_id', authenticateToken, async (req, res) =
         notes,
         previous_due_date,
         new_due_date,
-        created_at as transaction_timestamp 
+        created_at AS transaction_timestamp
       FROM unified_transactions
       WHERE party_type = ? AND party_id = ?
     `;
@@ -89,8 +89,13 @@ router.get('/party/:party_type/:party_id', authenticateToken, async (req, res) =
     query += ` LIMIT ${limitNum} OFFSET ${offset}`;
 
     const [transactions] = await pool.execute(query, params);
-    const formattedTransactions = transactions.map(txn => ({ ...txn, transaction_times: new Date(txn.transaction_timestamp) }));
-    console.log(transactions);
+    const formattedTransactions = transactions.map((txn) => ({
+      ...txn,
+      previous_balance: txn.previous_balance != null ? parseFloat(txn.previous_balance) : 0,
+      transaction_amount: txn.transaction_amount != null ? parseFloat(txn.transaction_amount) : 0,
+      paid_amount: txn.paid_amount != null ? parseFloat(txn.paid_amount) : 0,
+      balance_after: txn.balance_after != null ? parseFloat(txn.balance_after) : 0
+    }));
     // const formattedTransactions = transactions.map(txn => ({
     //   ...txn,
     //   transaction_timestamp: txn.transaction_timestamp.toLocaleString('en-IN', {
