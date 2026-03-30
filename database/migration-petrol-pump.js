@@ -197,6 +197,22 @@ async function runMigration() {
       console.log('   ✓ nozzle_readings.closing_reading nullable');
     } catch (e) { /* ignore */ }
 
+    // 5b. sale_items: unit snapshot per line (for bills/PDF)
+    try {
+      const [siUnit] = await connection.query(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'sale_items' AND COLUMN_NAME = 'unit'
+      `, [config.database]);
+      if (!siUnit || siUnit.length === 0) {
+        await connection.query(
+          'ALTER TABLE sale_items ADD COLUMN unit VARCHAR(50) DEFAULT NULL AFTER discount_percentage'
+        );
+        console.log('   ✓ sale_items.unit');
+      }
+    } catch (e) {
+      console.warn('   ⚠ sale_items.unit:', e.message);
+    }
+
     // 6. sale_transactions: add attendant_id, nozzle_id (no FK to avoid constraint issues)
     const [stCols] = await connection.query(`
       SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS

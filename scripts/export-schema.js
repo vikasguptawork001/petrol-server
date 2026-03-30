@@ -8,6 +8,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { getLocalDateString, getLocalISOString } = require('../utils/dateUtils');
 
 // Load .env from server directory
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
@@ -47,7 +48,7 @@ async function exportSchema() {
     const lines = [
       '-- Exported table structure',
       `-- Database: ${dbName}`,
-      `-- Date: ${new Date().toISOString()}`,
+      `-- Date (IST): ${getLocalISOString()}`,
       '-- Run this on the new database (after creating it) to recreate table structures.',
       '',
       `USE \`${dbName}\`;`,
@@ -66,7 +67,7 @@ async function exportSchema() {
     }
 
     const outDir = path.join(__dirname, '..', 'database');
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const dateStr = getLocalDateString();
     const outPath = path.join(outDir, `exported-schema-${dateStr}.sql`);
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(outPath, lines.join('\n'), 'utf8');

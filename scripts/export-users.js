@@ -7,6 +7,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { getLocalDateString, getLocalISOString } = require('../utils/dateUtils');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const mysql = require('mysql2/promise');
@@ -42,7 +43,7 @@ async function exportUsers() {
     const lines = [
       '-- Exported users table (structure + data)',
       `-- Database: ${dbName}`,
-      `-- Date: ${new Date().toISOString()}`,
+      `-- Date (IST): ${getLocalISOString()}`,
       '',
       `USE \`${dbName}\`;`,
       '',
@@ -65,7 +66,7 @@ async function exportUsers() {
     }
 
     const outDir = path.join(__dirname, '..', 'database');
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const dateStr = getLocalDateString();
     const outPath = path.join(outDir, `exported-users-${dateStr}.sql`);
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(outPath, lines.join('\n'), 'utf8');

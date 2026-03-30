@@ -2,6 +2,7 @@ const express = require('express');
 const ExcelJS = require('exceljs');
 const pool = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { parsePageLimit } = require('../utils/paginationParams');
 
 const router = express.Router();
 
@@ -9,9 +10,7 @@ const router = express.Router();
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { page = 1, limit = 50 } = req.query;
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 50;
-    const offset = (pageNum - 1) * limitNum;
+    const { pageNum, limitNum, offset } = parsePageLimit(page, limit, { defaultLimit: 50, maxLimit: 5000 });
 
     // First, update order sheet based on current item quantities and alert quantities
     await pool.execute(

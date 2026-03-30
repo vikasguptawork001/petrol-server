@@ -151,10 +151,11 @@ const validateTransaction = (req, res, next) => {
     if (!item.item_id || isNaN(item.item_id) || item.item_id <= 0) {
       return res.status(400).json({ error: 'Valid item ID is required for all items' });
     }
-    if (!item.quantity || isNaN(item.quantity) || item.quantity <= 0) {
-      return res.status(400).json({ error: 'Valid quantity (greater than 0) is required for all items' });
+    const qty = parseInt(item.quantity, 10);
+    if (item.quantity === undefined || item.quantity === null || item.quantity === '' || Number.isNaN(qty) || qty < 0) {
+      return res.status(400).json({ error: 'Valid quantity (0 or positive integer) is required for all items' });
     }
-    if (item.quantity % 1 !== 0) {
+    if (qty % 1 !== 0) {
       return res.status(400).json({ error: 'Quantity must be a whole number' });
     }
     if (item.sale_rate === undefined || item.sale_rate === null || isNaN(item.sale_rate) || item.sale_rate < 0) {
@@ -181,6 +182,22 @@ const validateTransaction = (req, res, next) => {
     if (item.discount_type && !['amount', 'percentage'].includes(item.discount_type)) {
       return res.status(400).json({ error: 'Discount type must be either "amount" or "percentage"' });
     }
+
+    if (item.unit !== undefined && item.unit !== null && item.unit !== '') {
+      if (typeof item.unit !== 'string' && typeof item.unit !== 'number') {
+        return res.status(400).json({ error: 'Unit must be a string or number' });
+      }
+      const u = String(item.unit).trim();
+      if (u.length > 50) {
+        return res.status(400).json({ error: 'Unit must be at most 50 characters' });
+      }
+      item.unit = u;
+    }
+  }
+
+  const hasPositiveQty = items.some((item) => (parseInt(item.quantity, 10) || 0) > 0);
+  if (!hasPositiveQty) {
+    return res.status(400).json({ error: 'At least one item must have quantity greater than 0' });
   }
 
   if (payment_status && !['fully_paid', 'partially_paid'].includes(payment_status)) {
@@ -193,9 +210,19 @@ const validateTransaction = (req, res, next) => {
     }
   }
 
-  // Validate with_gst
-  if (with_gst !== undefined && typeof with_gst !== 'boolean') {
-    return res.status(400).json({ error: 'with_gst must be a boolean value' });
+  // Validate with_gst (JSON boolean or 0/1 from some clients)
+  if (with_gst !== undefined && with_gst !== null) {
+    const ok =
+      typeof with_gst === 'boolean' ||
+      with_gst === 0 ||
+      with_gst === 1 ||
+      with_gst === '0' ||
+      with_gst === '1' ||
+      with_gst === 'true' ||
+      with_gst === 'false';
+    if (!ok) {
+      return res.status(400).json({ error: 'with_gst must be a boolean value' });
+    }
   }
 
   // Validate previous_balance_paid

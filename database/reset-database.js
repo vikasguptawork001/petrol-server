@@ -79,6 +79,7 @@ async function resetDatabase() {
       CREATE TABLE items (
         id INT AUTO_INCREMENT PRIMARY KEY,
         product_name VARCHAR(255) NOT NULL,
+        unit VARCHAR(50) DEFAULT NULL,
         product_code VARCHAR(100) UNIQUE,
         brand VARCHAR(100),
         hsn_number VARCHAR(50),
@@ -271,6 +272,7 @@ async function resetDatabase() {
         discount DECIMAL(10,2) DEFAULT 0,
         discount_type ENUM('amount', 'percentage') DEFAULT 'amount',
         discount_percentage DECIMAL(5,2) DEFAULT NULL,
+        unit VARCHAR(50) DEFAULT NULL,
         FOREIGN KEY (sale_transaction_id) REFERENCES sale_transactions(id) ON DELETE CASCADE,
         FOREIGN KEY (item_id) REFERENCES items(id)
       )

@@ -381,7 +381,8 @@ router.get('/sellers/due-sheet', authenticateToken, authorizeRole('super_admin')
       limit = 50,
       from_due_date,
       to_due_date,
-      search = ''
+      search = '',
+      overdue_only
     } = req.query;
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -390,6 +391,17 @@ router.get('/sellers/due-sheet', authenticateToken, authorizeRole('super_admin')
 
     const params = [];
     let where = 'WHERE balance_amount > 0';
+
+    /** When true, only creditors whose due date is in the past (overdue) — matches summary overdue_count logic */
+    const overdueOnly =
+      overdue_only === true ||
+      overdue_only === 'true' ||
+      overdue_only === '1' ||
+      overdue_only === 1;
+
+    if (overdueOnly) {
+      where += ' AND due_date IS NOT NULL AND due_date < CURDATE()';
+    }
 
     if (from_due_date) {
       where += ' AND (due_date IS NULL OR due_date >= ?)';

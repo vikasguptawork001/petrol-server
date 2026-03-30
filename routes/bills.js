@@ -54,7 +54,8 @@ router.get('/:id/pdf', authenticateToken, async (req, res) => {
     transaction.previous_balance = calculatedPreviousBalance > 0.01 ? calculatedPreviousBalance : 0;
 
     const [items] = await pool.execute(
-      `SELECT si.*, i.product_name, i.brand, i.hsn_number, i.tax_rate 
+      `SELECT si.*, i.product_name, i.brand, i.hsn_number, i.tax_rate,
+              COALESCE(NULLIF(TRIM(si.unit), ''), NULLIF(TRIM(i.unit), ''), 'PCS') AS line_unit
        FROM sale_items si 
        JOIN items i ON si.item_id = i.id 
        WHERE si.sale_transaction_id = ?`,

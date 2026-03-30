@@ -50,8 +50,8 @@ const poolConfig = {
   queueLimit: config.database.queueLimit,
   // Automatically return date/time types as strict strings instead of Date objects to preserve actual local time logic
   dateStrings: true,
-  // Set timezone to UTC to ensure consistent timestamp handling
-  timezone: 'Z', // 'Z' represents UTC in mysql2
+  // IST: session and driver interpret DATETIME/TIMESTAMP in India Standard Time
+  timezone: '+05:30',
   // Connection establishment timeout only (valid for Connection)
   connectTimeout: 100000, // 100 seconds
 };
@@ -88,16 +88,18 @@ if (config.database.ssl) {
 // Create the pool
 const pool = mysql.createPool(poolConfig);
 
-// Wrapper to ensure UTC timezone is set for all connections
-// This ensures that TIMESTAMP columns are stored and retrieved in UTC
-// MySQL TIMESTAMP columns are always stored in UTC but converted to/from session timezone
-// By setting session timezone to UTC, we prevent any timezone conversion issues
+// Every pooled connection must use IST (pool.execute/query does not use getConnection wrapper below)
+pool.on('connection', (connection) => {
+  connection.query("SET time_zone = '+05:30'", (err) => {
+    if (err) console.error('[DB] SET time_zone on connection:', err.message);
+  });
+});
+
+// Wrapper so explicit getConnection() also has IST (redundant with handler above, keeps same behavior)
 const originalGetConnection = pool.getConnection.bind(pool);
 pool.getConnection = async function() {
   const connection = await originalGetConnection();
-  // Explicitly set timezone to UTC for this connection
-  // This ensures TIMESTAMP columns use UTC regardless of MySQL server timezone setting
-  await connection.execute("SET time_zone = '+00:00'");
+  await connection.execute("SET time_zone = '+05:30'");
   return connection;
 };
 
@@ -108,10 +110,10 @@ pool.getConnection()
       // Verify timezone is set correctly
       const [rows] = await connection.execute("SELECT @@session.time_zone as timezone, @@global.time_zone as server_timezone");
       console.log('✅ Database connected successfully');
-      console.log(`✅ Session timezone set to: ${rows[0].timezone} (should be +00:00 for UTC)`);
+      console.log(`✅ Session timezone set to: ${rows[0].timezone} (expected +05:30 for IST)`);
       console.log(`ℹ️  Server timezone: ${rows[0].server_timezone}`);
-      if (rows[0].timezone !== '+00:00' && rows[0].timezone !== 'Z' && rows[0].timezone !== 'UTC') {
-        console.warn('⚠️  WARNING: Session timezone is not UTC! Timestamps may be incorrect.');
+      if (rows[0].timezone !== '+05:30') {
+        console.warn('⚠️  WARNING: Session timezone is not IST (+05:30). Check MySQL time_zone tables.');
       }
     } catch (err) {
       console.error('Error verifying timezone:', err);
