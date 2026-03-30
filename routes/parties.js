@@ -21,6 +21,21 @@ async function ensureBuyerBankColumns() {
   }
 }
 
+async function ensureSellerBankColumns() {
+  const [rows] = await pool.execute(`
+    SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'seller_parties'
+    AND COLUMN_NAME IN ('cheque_number', 'bank_name')
+  `);
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  if (!have.has('cheque_number')) {
+    await pool.execute('ALTER TABLE seller_parties ADD COLUMN cheque_number VARCHAR(64) NULL');
+  }
+  if (!have.has('bank_name')) {
+    await pool.execute('ALTER TABLE seller_parties ADD COLUMN bank_name VARCHAR(191) NULL');
+  }
+}
+
 // Helper function to check for duplicate mobile/email (excludes archived parties)
 async function checkDuplicateMobileEmail(table, mobile_number, email, excludeId = null) {
   const conditions = [];
@@ -563,16 +578,18 @@ router.get('/sellers/:id', authenticateToken, async (req, res) => {
 // Add seller party / creditor (only admin and super_admin)
 router.post('/sellers', authenticateToken, authorizeRole('admin', 'super_admin'), validateParty, async (req, res) => {
   try {
+    await ensureSellerBankColumns();
     const {
       party_name,
       mobile_number,
-      email,
       address,
       opening_balance,
       closing_balance,
       gst_number,
       due_date,
-      vehicle_number
+      vehicle_number,
+      cheque_number,
+      bank_name
     } = req.body;
 
     // Validate GST number (alphanumeric, max 20 chars)
@@ -580,19 +597,31 @@ router.post('/sellers', authenticateToken, authorizeRole('admin', 'super_admin')
       return res.status(400).json({ error: 'GST number must be alphanumeric and maximum 20 characters' });
     }
 
-    // Check for duplicate mobile number and email
-    const { mobileExists, emailExists } = await checkDuplicateMobileEmail('seller_parties', mobile_number, email);
+    const { mobileExists } = await checkDuplicateMobileEmail('seller_parties', mobile_number, null);
     if (mobileExists) {
       return res.status(400).json({ error: 'Mobile number already exists' });
     }
-    if (emailExists) {
-      return res.status(400).json({ error: 'Email already exists' });
-    }
+
+    const chq = cheque_number != null && String(cheque_number).trim() !== '' ? String(cheque_number).trim() : null;
+    const bank = bank_name != null && String(bank_name).trim() !== '' ? String(bank_name).trim() : null;
 
     const [result] = await pool.execute(
-      `INSERT INTO seller_parties (party_name, mobile_number, email, address, opening_balance, closing_balance, balance_amount, gst_number, due_date, vehicle_number)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [party_name, mobile_number || null, email ? email.toLowerCase() : null, address || null, opening_balance || 0, closing_balance || 0, opening_balance || 0, gst_number || null, due_date || null, vehicle_number ? vehicle_number.trim() : null]
+      `INSERT INTO seller_parties (party_name, mobile_number, email, address, opening_balance, closing_balance, balance_amount, gst_number, due_date, vehicle_number, cheque_number, bank_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        party_name,
+        mobile_number || null,
+        null,
+        address || null,
+        opening_balance || 0,
+        closing_balance || 0,
+        opening_balance || 0,
+        gst_number || null,
+        due_date || null,
+        vehicle_number ? vehicle_number.trim() : null,
+        chq,
+        bank
+      ]
     );
 
     res.json({ message: 'Creditor party added successfully', id: result.insertId });
@@ -603,9 +632,6 @@ router.post('/sellers', authenticateToken, authorizeRole('admin', 'super_admin')
       if (error.sqlMessage.includes('mobile_number')) {
         return res.status(400).json({ error: 'Mobile number already exists' });
       }
-      if (error.sqlMessage.includes('email')) {
-        return res.status(400).json({ error: 'Email already exists' });
-      }
       return res.status(400).json({ error: 'Duplicate entry detected' });
     }
     res.status(500).json({ error: 'Server error' });
@@ -615,16 +641,18 @@ router.post('/sellers', authenticateToken, authorizeRole('admin', 'super_admin')
 // Update seller party / creditor (only admin and super_admin)
 router.patch('/sellers/:id', authenticateToken, authorizeRole('admin', 'super_admin'), async (req, res) => {
   try {
+    await ensureSellerBankColumns();
     const {
       party_name,
       mobile_number,
-      email,
       address,
       opening_balance,
       closing_balance,
       gst_number,
       due_date,
-      vehicle_number
+      vehicle_number,
+      cheque_number,
+      bank_name
     } = req.body;
 
     // Get existing party to check current values
@@ -651,11 +679,6 @@ router.patch('/sellers/:id', authenticateToken, authorizeRole('admin', 'super_ad
     if (mobile_number !== undefined) {
       updateFields.push('mobile_number = ?');
       params.push(mobile_number || null);
-    }
-
-    if (email !== undefined) {
-      updateFields.push('email = ?');
-      params.push(email ? email.toLowerCase() : null);
     }
 
     if (address !== undefined) {
@@ -692,22 +715,30 @@ router.patch('/sellers/:id', authenticateToken, authorizeRole('admin', 'super_ad
       params.push(vehicle_number === null || vehicle_number === '' ? null : (vehicle_number || null));
     }
 
+    if (cheque_number !== undefined) {
+      updateFields.push('cheque_number = ?');
+      params.push(cheque_number === null || String(cheque_number).trim() === '' ? null : String(cheque_number).trim());
+    }
+
+    if (bank_name !== undefined) {
+      updateFields.push('bank_name = ?');
+      params.push(bank_name === null || String(bank_name).trim() === '' ? null : String(bank_name).trim());
+    }
+
     // If no fields to update, return error
     if (updateFields.length === 0) {
       return res.status(400).json({ error: 'No fields provided to update' });
     }
 
-    // Check for duplicate mobile number and email only if they are being updated
+    updateFields.push('email = ?');
+    params.push(null);
+
     const finalMobileNumber = mobile_number !== undefined ? mobile_number : existingParty.mobile_number;
-    const finalEmail = email !== undefined ? email : existingParty.email;
-    
-    if (mobile_number !== undefined || email !== undefined) {
-      const { mobileExists, emailExists } = await checkDuplicateMobileEmail('seller_parties', finalMobileNumber, finalEmail, req.params.id);
+
+    if (mobile_number !== undefined) {
+      const { mobileExists } = await checkDuplicateMobileEmail('seller_parties', finalMobileNumber, null, req.params.id);
       if (mobileExists) {
         return res.status(400).json({ error: 'Mobile number already exists' });
-      }
-      if (emailExists) {
-        return res.status(400).json({ error: 'Email already exists' });
       }
     }
 
@@ -722,9 +753,6 @@ router.patch('/sellers/:id', authenticateToken, authorizeRole('admin', 'super_ad
     if (error.code === 'ER_DUP_ENTRY') {
       if (error.sqlMessage.includes('mobile_number')) {
         return res.status(400).json({ error: 'Mobile number already exists' });
-      }
-      if (error.sqlMessage.includes('email')) {
-        return res.status(400).json({ error: 'Email already exists' });
       }
       return res.status(400).json({ error: 'Duplicate entry detected' });
     }
