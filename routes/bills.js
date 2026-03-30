@@ -10,11 +10,14 @@ router.get('/:id/pdf', authenticateToken, async (req, res) => {
   try {
     const [transactions] = await pool.execute(
       `SELECT st.*, sp.party_name, sp.mobile_number, sp.address, sp.email, sp.gst_number,
-              a.name AS attendant_name, n.name AS nozzle_name
+              a.name AS attendant_name, n.name AS nozzle_name,
+              ut_due.new_due_date AS bill_due_date
        FROM sale_transactions st
        JOIN seller_parties sp ON st.seller_party_id = sp.id
        LEFT JOIN attendants a ON st.attendant_id = a.id
        LEFT JOIN nozzles n ON st.nozzle_id = n.id
+       LEFT JOIN unified_transactions ut_due ON ut_due.reference_id = st.id
+         AND ut_due.party_type = 'seller' AND ut_due.transaction_type = 'sale'
        WHERE st.id = ?`,
       [req.params.id]
     );

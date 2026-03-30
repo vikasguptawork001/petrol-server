@@ -609,6 +609,21 @@ const generateBillPDF = (transaction, items, res) => {
     doc.text('Balance Due:', margin, currentY);
     doc.text(`Rs.${formatCurrency(balanceDue)}`, rightEdge - 80, currentY, { width: 80, align: 'right' });
     currentY += 20;
+
+    const payStat = String(transaction.payment_status || '').toLowerCase();
+    const creditDue = transaction.bill_due_date;
+    if (payStat === 'partially_paid' && creditDue) {
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
+      doc.text('Credit due date:', margin, currentY);
+      const dueLabel = new Date(creditDue).toLocaleDateString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      });
+      doc.text(dueLabel, rightEdge - 120, currentY, { width: 120, align: 'right' });
+      currentY += 16;
+    }
     
     // Amount in words
     doc.rect(margin, currentY, contentWidth, 20).stroke();

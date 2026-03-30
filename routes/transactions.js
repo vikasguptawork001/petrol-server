@@ -30,6 +30,12 @@ router.post('/sale', authenticateToken, validateTransaction, async (req, res) =>
       return res.status(400).json({ error: 'Seller party and items are required' });
     }
 
+    const aid = attendant_id != null ? parseInt(attendant_id, 10) : null;
+    const nid = nozzle_id != null ? parseInt(nozzle_id, 10) : null;
+    if (!aid || aid < 1 || !nid || nid < 1) {
+      return res.status(400).json({ error: 'Attendant and nozzle are required for every sale.' });
+    }
+
     if (payment_status === 'partially_paid' && (!due_date || String(due_date).trim() === '')) {
       return res.status(400).json({ error: 'Due date is required for partial payment. Please set due date before proceeding.' });
     }

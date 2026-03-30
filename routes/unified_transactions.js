@@ -157,7 +157,9 @@ router.post('/', authenticateToken, async (req, res) => {
       bill_number,
       payment_method,
       payment_status,
-      notes
+      notes,
+      previous_due_date,
+      new_due_date
     } = req.body;
 
     // Validate required fields
@@ -175,34 +177,70 @@ router.post('/', authenticateToken, async (req, res) => {
 
     // Verify party exists
     const partyTable = party_type === 'seller' ? 'seller_parties' : 'buyer_parties';
-    const [party] = await pool.execute(
-      `SELECT id, balance_amount FROM ${partyTable} WHERE id = ?`,
-      [party_id]
-    );
-    
+    const partySql =
+      party_type === 'seller'
+        ? `SELECT id, balance_amount, due_date FROM ${partyTable} WHERE id = ?`
+        : `SELECT id, balance_amount FROM ${partyTable} WHERE id = ?`;
+    const [party] = await pool.execute(partySql, [party_id]);
+
     if (party.length === 0) {
       return res.status(404).json({ error: `${party_type} party not found` });
     }
 
+    const partyRow = party[0];
+
     // Calculate values if not provided
-    const prevBalance = previous_balance !== undefined ? parseFloat(previous_balance) : parseFloat(party[0].balance_amount || 0);
+    const prevBalance = previous_balance !== undefined ? parseFloat(previous_balance) : parseFloat(partyRow.balance_amount || 0);
     const txnAmount = parseFloat(transaction_amount || 0);
     const paid = parseFloat(paid_amount || 0);
-    const balance = balance_after !== undefined 
-      ? parseFloat(balance_after) 
+    const balance = balance_after !== undefined
+      ? parseFloat(balance_after)
       : Math.max(0, prevBalance + txnAmount - paid);
+
+    let prevDueInsert = null;
+    let newDueInsert = null;
+    if (transaction_type === 'payment' && party_type === 'seller') {
+      const partyDue = partyRow.due_date ? String(partyRow.due_date).slice(0, 10) : null;
+      prevDueInsert =
+        previous_due_date != null && String(previous_due_date).trim() !== ''
+          ? String(previous_due_date).trim().slice(0, 10)
+          : partyDue;
+      if (balance > 0.009) {
+        if (new_due_date == null || String(new_due_date).trim() === '') {
+          return res.status(400).json({
+            error: 'New credit due date is required when a balance remains after this payment.'
+          });
+        }
+        newDueInsert = String(new_due_date).trim().slice(0, 10);
+      } else {
+        newDueInsert = null;
+      }
+    }
 
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
     try {
-      // Insert into unified_transactions
+      const [dueColCheck] = await connection.execute(`
+        SELECT COUNT(*) as c FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'unified_transactions'
+        AND COLUMN_NAME = 'previous_due_date'
+      `);
+      if (dueColCheck[0].c === 0) {
+        await connection.execute(`
+          ALTER TABLE unified_transactions
+          ADD COLUMN previous_due_date DATE NULL,
+          ADD COLUMN new_due_date DATE NULL
+        `);
+      }
+
       const [result] = await connection.execute(
         `INSERT INTO unified_transactions (
           party_type, party_id, transaction_type, transaction_date,
           previous_balance, transaction_amount, paid_amount, balance_after,
-          reference_id, bill_number, payment_method, payment_status, notes, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          reference_id, bill_number, payment_method, payment_status, notes, created_by,
+          previous_due_date, new_due_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           party_type,
           party_id,
@@ -217,15 +255,24 @@ router.post('/', authenticateToken, async (req, res) => {
           payment_method || null,
           payment_status || null,
           notes || null,
-          (req.user?.id ? parseInt(req.user.id) : null)
+          (req.user?.id ? parseInt(req.user.id) : null),
+          prevDueInsert,
+          newDueInsert
         ]
       );
 
-      // Update party balance
-      await connection.execute(
-        `UPDATE ${partyTable} SET balance_amount = ? WHERE id = ?`,
-        [balance, party_id]
-      );
+      if (party_type === 'seller' && transaction_type === 'payment') {
+        const dueVal = balance > 0.009 && newDueInsert ? newDueInsert : null;
+        await connection.execute(
+          `UPDATE seller_parties SET balance_amount = ?, due_date = ? WHERE id = ?`,
+          [balance, dueVal, party_id]
+        );
+      } else {
+        await connection.execute(
+          `UPDATE ${partyTable} SET balance_amount = ? WHERE id = ?`,
+          [balance, party_id]
+        );
+      }
 
       await connection.commit();
 

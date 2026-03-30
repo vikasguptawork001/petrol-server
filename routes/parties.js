@@ -6,6 +6,21 @@ const { getLocalDateString } = require('../utils/dateUtils');
 
 const router = express.Router();
 
+async function ensureBuyerBankColumns() {
+  const [rows] = await pool.execute(`
+    SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'buyer_parties'
+    AND COLUMN_NAME IN ('cheque_number', 'bank_name')
+  `);
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  if (!have.has('cheque_number')) {
+    await pool.execute('ALTER TABLE buyer_parties ADD COLUMN cheque_number VARCHAR(64) NULL');
+  }
+  if (!have.has('bank_name')) {
+    await pool.execute('ALTER TABLE buyer_parties ADD COLUMN bank_name VARCHAR(191) NULL');
+  }
+}
+
 // Helper function to check for duplicate mobile/email (excludes archived parties)
 async function checkDuplicateMobileEmail(table, mobile_number, email, excludeId = null) {
   const conditions = [];
@@ -136,7 +151,9 @@ router.post('/buyers', authenticateToken, authorizeRole('admin', 'super_admin'),
       address,
       opening_balance,
       closing_balance,
-      gst_number
+      gst_number,
+      cheque_number,
+      bank_name
     } = req.body;
 
     // Validate GST number (alphanumeric, max 20 chars)
@@ -153,10 +170,22 @@ router.post('/buyers', authenticateToken, authorizeRole('admin', 'super_admin'),
       return res.status(400).json({ error: 'Email already exists' });
     }
 
+    await ensureBuyerBankColumns();
     const [result] = await pool.execute(
-      `INSERT INTO buyer_parties (party_name, mobile_number, email, address, opening_balance, closing_balance, balance_amount, gst_number)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [party_name, mobile_number || null, email ? email.toLowerCase() : null, address, opening_balance || 0, closing_balance || 0, opening_balance || 0, gst_number || null]
+      `INSERT INTO buyer_parties (party_name, mobile_number, email, address, opening_balance, closing_balance, balance_amount, gst_number, cheque_number, bank_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        party_name,
+        mobile_number || null,
+        email ? email.toLowerCase() : null,
+        address,
+        opening_balance || 0,
+        closing_balance || 0,
+        opening_balance || 0,
+        gst_number || null,
+        cheque_number && String(cheque_number).trim() ? String(cheque_number).trim() : null,
+        bank_name && String(bank_name).trim() ? String(bank_name).trim() : null
+      ]
     );
 
     res.json({ message: 'Buyer party added successfully', id: result.insertId });
@@ -186,9 +215,12 @@ router.patch('/buyers/:id', authenticateToken, authorizeRole('admin', 'super_adm
       address,
       opening_balance,
       closing_balance,
-      gst_number
+      gst_number,
+      cheque_number,
+      bank_name
     } = req.body;
 
+    await ensureBuyerBankColumns();
     // Get existing party to check current values
     const [existingParties] = await pool.execute('SELECT * FROM buyer_parties WHERE id = ?', [req.params.id]);
     if (existingParties.length === 0) {
@@ -242,6 +274,15 @@ router.patch('/buyers/:id', authenticateToken, authorizeRole('admin', 'super_adm
       }
       updateFields.push('gst_number = ?');
       params.push(gst_number || null);
+    }
+
+    if (cheque_number !== undefined) {
+      updateFields.push('cheque_number = ?');
+      params.push(cheque_number && String(cheque_number).trim() ? String(cheque_number).trim() : null);
+    }
+    if (bank_name !== undefined) {
+      updateFields.push('bank_name = ?');
+      params.push(bank_name && String(bank_name).trim() ? String(bank_name).trim() : null);
     }
 
     // If no fields to update, return error
