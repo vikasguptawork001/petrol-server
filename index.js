@@ -18,7 +18,8 @@ const billRoutes = require('./routes/bills');
 const nozzleRoutes = require('./routes/nozzles');
 const attendantRoutes = require('./routes/attendants');
 const nozzleReadingsRoutes = require('./routes/nozzleReadings');
-const { runIsArchivedMigration } = require('./utils/runMigration');
+const expensesRoutes = require('./routes/expenses');
+const { runIsArchivedMigration, ensureExpensesTable } = require('./utils/runMigration');
 
 const app = express();
 
@@ -34,6 +35,12 @@ const app = express();
     } else {
       console.warn(`⚠ Migration warning: ${result.error}`);
       console.warn('⚠ Server will continue, but migration should be run manually if needed');
+    }
+    const exp = await ensureExpensesTable();
+    if (exp.success) {
+      console.log(`✓ ${exp.message}`);
+    } else {
+      console.warn(`⚠ Expenses table: ${exp.error}`);
     }
   } catch (error) {
     console.error('Migration check error:', error.message);
@@ -67,6 +74,7 @@ app.use('/api/bills', billRoutes);
 app.use('/api/nozzles', nozzleRoutes);
 app.use('/api/attendants', attendantRoutes);
 app.use('/api/nozzle-readings', nozzleReadingsRoutes);
+app.use('/api/expenses', expensesRoutes);
 
 // Health check
 app.get('/api/health', async (req, res) => {

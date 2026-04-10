@@ -50,7 +50,34 @@ async function runIsArchivedMigration() {
   }
 }
 
-module.exports = { runIsArchivedMigration };
+/**
+ * Create expenses table if missing (day-to-day outflows: purpose, paid_to, reason).
+ */
+async function ensureExpensesTable() {
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS expenses (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        expense_date DATE NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        purpose VARCHAR(255) NOT NULL,
+        paid_to VARCHAR(255) NULL,
+        reason TEXT NULL,
+        notes TEXT NULL,
+        created_by_user_id INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_expense_date (expense_date),
+        INDEX idx_created_by (created_by_user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    return { success: true, message: 'Expenses table ready' };
+  } catch (error) {
+    console.error('ensureExpensesTable error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+module.exports = { runIsArchivedMigration, ensureExpensesTable };
 
 
 

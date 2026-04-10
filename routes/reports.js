@@ -1313,6 +1313,216 @@ router.get('/returns/export', authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * Day-wise nozzle meter readings: liters sold per calendar day (optionally per nozzle).
+ * Query: from_date, to_date, nozzle_id (optional). Defaults: last 30 days through today.
+ */
+router.get('/nozzle-readings/daywise', authenticateToken, async (req, res) => {
+  try {
+    let { from_date, to_date, nozzle_id } = req.query;
+    if (from_date && to_date && String(from_date) > String(to_date)) {
+      const t = from_date;
+      from_date = to_date;
+      to_date = t;
+    }
+
+    let where = 'WHERE 1=1';
+    const params = [];
+    if (from_date) {
+      where += ' AND nr.reading_date >= ?';
+      params.push(from_date);
+    } else {
+      where += ' AND nr.reading_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+    }
+    if (to_date) {
+      where += ' AND nr.reading_date <= ?';
+      params.push(to_date);
+    } else if (!from_date) {
+      where += ' AND nr.reading_date <= CURDATE()';
+    }
+    if (nozzle_id != null && String(nozzle_id).trim() !== '') {
+      const nid = parseInt(nozzle_id, 10);
+      if (!Number.isNaN(nid)) {
+        where += ' AND nr.nozzle_id = ?';
+        params.push(nid);
+      }
+    }
+
+    const [byDay] = await pool.execute(
+      `SELECT
+         nr.reading_date,
+         COUNT(*) AS shift_count,
+         SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN 1 ELSE 0 END) AS completed_shifts,
+         SUM(CASE WHEN nr.closing_reading IS NULL THEN 1 ELSE 0 END) AS pending_shifts,
+         COALESCE(SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN (nr.closing_reading - nr.opening_reading) ELSE 0 END), 0) AS liters_sold
+       FROM nozzle_readings nr
+       JOIN nozzles n ON n.id = nr.nozzle_id
+       ${where}
+       GROUP BY nr.reading_date
+       ORDER BY nr.reading_date DESC`,
+      params
+    );
+
+    const [byDayNozzle] = await pool.execute(
+      `SELECT
+         nr.reading_date,
+         nr.nozzle_id,
+         n.name AS nozzle_name,
+         COUNT(*) AS shift_count,
+         SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN 1 ELSE 0 END) AS completed_shifts,
+         SUM(CASE WHEN nr.closing_reading IS NULL THEN 1 ELSE 0 END) AS pending_shifts,
+         COALESCE(SUM(CASE WHEN nr.closing_reading IS NOT NULL THEN (nr.closing_reading - nr.opening_reading) ELSE 0 END), 0) AS liters_sold
+       FROM nozzle_readings nr
+       JOIN nozzles n ON n.id = nr.nozzle_id
+       ${where}
+       GROUP BY nr.reading_date, nr.nozzle_id, n.name
+       ORDER BY nr.reading_date DESC, n.name ASC`,
+      params
+    );
+
+    const mapDay = (r) => ({
+      reading_date: r.reading_date,
+      shift_count: parseInt(r.shift_count, 10) || 0,
+      completed_shifts: parseInt(r.completed_shifts, 10) || 0,
+      pending_shifts: parseInt(r.pending_shifts, 10) || 0,
+      liters_sold: parseFloat(r.liters_sold) || 0
+    });
+
+    const mapDayNozzle = (r) => ({
+      reading_date: r.reading_date,
+      nozzle_id: r.nozzle_id,
+      nozzle_name: r.nozzle_name || '—',
+      shift_count: parseInt(r.shift_count, 10) || 0,
+      completed_shifts: parseInt(r.completed_shifts, 10) || 0,
+      pending_shifts: parseInt(r.pending_shifts, 10) || 0,
+      liters_sold: parseFloat(r.liters_sold) || 0
+    });
+
+    const byDayNorm = (byDay || []).map(mapDay);
+    const byDayNozzleNorm = (byDayNozzle || []).map(mapDayNozzle);
+
+    const summary = byDayNorm.reduce(
+      (acc, row) => {
+        acc.total_liters += row.liters_sold;
+        acc.total_shifts += row.shift_count;
+        acc.days += 1;
+        return acc;
+      },
+      { total_liters: 0, total_shifts: 0, days: 0 }
+    );
+
+    res.json({
+      by_day: byDayNorm,
+      by_day_nozzle: byDayNozzleNorm,
+      summary
+    });
+  } catch (error) {
+    console.error('Day-wise nozzle readings report error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * Day-wise sales with paid vs due (balance) totals per transaction date.
+ * Query: from_date, to_date, gst_filter, seller_party_id, nozzle_id, attendant_id,
+ * credit_only — if '1' or 'true', only bills with balance_amount > 0 are included.
+ */
+router.get('/sales/daywise', authenticateToken, async (req, res) => {
+  try {
+    let {
+      from_date,
+      to_date,
+      gst_filter,
+      seller_party_id,
+      nozzle_id,
+      attendant_id,
+      credit_only
+    } = req.query;
+
+    if (from_date && to_date && String(from_date) > String(to_date)) {
+      const t = from_date;
+      from_date = to_date;
+      to_date = t;
+    }
+
+    let where = 'WHERE 1=1';
+    const params = [];
+
+    if (from_date) {
+      where += ' AND st.transaction_date >= ?';
+      params.push(from_date);
+    } else {
+      where += ' AND st.transaction_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+    }
+    if (to_date) {
+      where += ' AND st.transaction_date <= ?';
+      params.push(to_date);
+    } else if (!from_date) {
+      where += ' AND st.transaction_date <= CURDATE()';
+    }
+
+    if (gst_filter === 'with_gst') where += ' AND st.with_gst = 1';
+    else if (gst_filter === 'without_gst') where += ' AND st.with_gst = 0';
+
+    if (seller_party_id) {
+      where += ' AND st.seller_party_id = ?';
+      params.push(seller_party_id);
+    }
+    if (nozzle_id) {
+      where += ' AND st.nozzle_id = ?';
+      params.push(nozzle_id);
+    }
+    if (attendant_id) {
+      where += ' AND st.attendant_id = ?';
+      params.push(attendant_id);
+    }
+
+    const onlyCredit = credit_only === '1' || credit_only === 'true';
+    if (onlyCredit) {
+      where += ' AND st.balance_amount > 0';
+    }
+
+    const [rows] = await pool.execute(
+      `SELECT
+         st.transaction_date,
+         COUNT(*) AS bill_count,
+         COALESCE(SUM(st.total_amount), 0) AS total_sales,
+         COALESCE(SUM(st.paid_amount), 0) AS total_paid,
+         COALESCE(SUM(st.balance_amount), 0) AS total_due
+       FROM sale_transactions st
+       ${where}
+       GROUP BY st.transaction_date
+       ORDER BY st.transaction_date DESC`,
+      params
+    );
+
+    const normalized = (rows || []).map((r) => ({
+      transaction_date: r.transaction_date,
+      bill_count: parseInt(r.bill_count, 10) || 0,
+      total_sales: parseFloat(r.total_sales) || 0,
+      total_paid: parseFloat(r.total_paid) || 0,
+      total_due: parseFloat(r.total_due) || 0
+    }));
+
+    const summary = normalized.reduce(
+      (acc, row) => {
+        acc.bill_count += row.bill_count;
+        acc.total_sales += row.total_sales;
+        acc.total_paid += row.total_paid;
+        acc.total_due += row.total_due;
+        acc.days += 1;
+        return acc;
+      },
+      { bill_count: 0, total_sales: 0, total_paid: 0, total_due: 0, days: 0 }
+    );
+
+    res.json({ rows: normalized, summary, credit_only: onlyCredit });
+  } catch (error) {
+    console.error('Day-wise sales / due report error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
 
 
