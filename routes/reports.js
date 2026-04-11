@@ -10,7 +10,7 @@ const router = express.Router();
 // Get sales report
 router.get('/sales', authenticateToken, async (req, res) => {
   try {
-    const { from_date, to_date, gst_filter, seller_party_id, nozzle_id, attendant_id, page = 1, limit = 50 } = req.query; // gst_filter: 'all', 'with_gst', 'without_gst'
+    const { from_date, to_date, seller_party_id, nozzle_id, attendant_id, page = 1, limit = 50 } = req.query;
     const { pageNum, limitNum, offset } = parsePageLimit(page, limit, { defaultLimit: 50, maxLimit: 5000 });
     
     let baseQuery = `FROM sale_transactions st
@@ -30,13 +30,6 @@ router.get('/sales', authenticateToken, async (req, res) => {
     if (to_date) {
       baseQuery += ' AND st.transaction_date <= ?';
       params.push(to_date);
-    }
-
-    // Filter by GST status
-    if (gst_filter === 'with_gst') {
-      baseQuery += ' AND st.with_gst = 1';
-    } else if (gst_filter === 'without_gst') {
-      baseQuery += ' AND st.with_gst = 0';
     }
 
     if (seller_party_id) {
@@ -108,10 +101,6 @@ router.get('/sales', authenticateToken, async (req, res) => {
       totalProfit = parseFloat(profitResult[0]?.total_profit || 0);
     }
 
-    // Count bills with and without GST
-    const withGstCount = transactions.filter(t => t.with_gst === 1 || t.with_gst === true).length;
-    const withoutGstCount = transactions.filter(t => t.with_gst === 0 || t.with_gst === false).length;
-
     res.json({
       transactions,
       summary: {
@@ -119,9 +108,7 @@ router.get('/sales', authenticateToken, async (req, res) => {
         totalPaid,
         totalBalance,
         totalProfit: req.user.role === 'super_admin' ? totalProfit : null,
-        totalTransactions: totalRecords,
-        withGstCount,
-        withoutGstCount
+        totalTransactions: totalRecords
       },
       pagination: {
         page: pageNum,
@@ -139,7 +126,7 @@ router.get('/sales', authenticateToken, async (req, res) => {
 /** Aggregated sales totals grouped by attendant (Manage Attendant page) */
 router.get('/sales/by-attendant', authenticateToken, async (req, res) => {
   try {
-    let { from_date, to_date, gst_filter } = req.query;
+    let { from_date, to_date } = req.query;
     if (from_date && to_date && String(from_date) > String(to_date)) {
       const t = from_date;
       from_date = to_date;
@@ -157,8 +144,6 @@ router.get('/sales/by-attendant', authenticateToken, async (req, res) => {
       where += ' AND st.transaction_date <= ?';
       params.push(to_date);
     }
-    if (gst_filter === 'with_gst') where += ' AND st.with_gst = 1';
-    else if (gst_filter === 'without_gst') where += ' AND st.with_gst = 0';
 
     const [rows] = await pool.execute(
       `SELECT
@@ -195,7 +180,7 @@ router.get('/sales/by-attendant', authenticateToken, async (req, res) => {
 /** Aggregated sales totals grouped by nozzle (Manage Nozzle page) */
 router.get('/sales/by-nozzle', authenticateToken, async (req, res) => {
   try {
-    let { from_date, to_date, gst_filter } = req.query;
+    let { from_date, to_date } = req.query;
     if (from_date && to_date && String(from_date) > String(to_date)) {
       const t = from_date;
       from_date = to_date;
@@ -213,8 +198,6 @@ router.get('/sales/by-nozzle', authenticateToken, async (req, res) => {
       where += ' AND st.transaction_date <= ?';
       params.push(to_date);
     }
-    if (gst_filter === 'with_gst') where += ' AND st.with_gst = 1';
-    else if (gst_filter === 'without_gst') where += ' AND st.with_gst = 0';
 
     const [rows] = await pool.execute(
       `SELECT
@@ -251,7 +234,7 @@ router.get('/sales/by-nozzle', authenticateToken, async (req, res) => {
 // Get item-wise sales report (aggregated by item)
 router.get('/sales/items', authenticateToken, async (req, res) => {
   try {
-    const { from_date, to_date, gst_filter, item_query, seller_party_id, nozzle_id, attendant_id, page = 1, limit = 50 } = req.query;
+    const { from_date, to_date, item_query, seller_party_id, nozzle_id, attendant_id, page = 1, limit = 50 } = req.query;
     const { pageNum, limitNum, offset } = parsePageLimit(page, limit, { defaultLimit: 50, maxLimit: 5000 });
 
     let baseQuery = `
@@ -271,12 +254,6 @@ router.get('/sales/items', authenticateToken, async (req, res) => {
     if (to_date) {
       baseQuery += ' AND st.transaction_date <= ?';
       params.push(to_date);
-    }
-
-    if (gst_filter === 'with_gst') {
-      baseQuery += ' AND st.with_gst = 1';
-    } else if (gst_filter === 'without_gst') {
-      baseQuery += ' AND st.with_gst = 0';
     }
 
     if (seller_party_id) {
@@ -695,7 +672,7 @@ router.get('/returns/bill/:bill_number', authenticateToken, async (req, res) => 
 // Export item-wise sales report to Excel
 router.get('/sales/items/export', authenticateToken, async (req, res) => {
   try {
-    const { from_date, to_date, gst_filter, item_query, seller_party_id, nozzle_id } = req.query;
+    const { from_date, to_date, item_query, seller_party_id, nozzle_id } = req.query;
 
     // Reuse the same query as /sales/items
     let query = `
@@ -739,12 +716,6 @@ router.get('/sales/items/export', authenticateToken, async (req, res) => {
     if (to_date) {
       query += ' AND st.transaction_date <= ?';
       params.push(to_date);
-    }
-
-    if (gst_filter === 'with_gst') {
-      query += ' AND st.with_gst = 1';
-    } else if (gst_filter === 'without_gst') {
-      query += ' AND st.with_gst = 0';
     }
 
     if (seller_party_id) {
@@ -1424,7 +1395,7 @@ router.get('/nozzle-readings/daywise', authenticateToken, async (req, res) => {
 
 /**
  * Day-wise sales with paid vs due (balance) totals per transaction date.
- * Query: from_date, to_date, gst_filter, seller_party_id, nozzle_id, attendant_id,
+ * Query: from_date, to_date, seller_party_id, nozzle_id, attendant_id,
  * credit_only — if '1' or 'true', only bills with balance_amount > 0 are included.
  */
 router.get('/sales/daywise', authenticateToken, async (req, res) => {
@@ -1432,7 +1403,6 @@ router.get('/sales/daywise', authenticateToken, async (req, res) => {
     let {
       from_date,
       to_date,
-      gst_filter,
       seller_party_id,
       nozzle_id,
       attendant_id,
@@ -1460,9 +1430,6 @@ router.get('/sales/daywise', authenticateToken, async (req, res) => {
     } else if (!from_date) {
       where += ' AND st.transaction_date <= CURDATE()';
     }
-
-    if (gst_filter === 'with_gst') where += ' AND st.with_gst = 1';
-    else if (gst_filter === 'without_gst') where += ' AND st.with_gst = 0';
 
     if (seller_party_id) {
       where += ' AND st.seller_party_id = ?';

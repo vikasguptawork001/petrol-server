@@ -216,6 +216,146 @@ router.get('/summary', authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * Full meter-reading history for one attendant (all nozzles, date range).
+ * Ordered by date, then time — shows each shift: opening/closing, nozzle, liters sold.
+ */
+router.get('/report/attendant-history', authenticateToken, async (req, res) => {
+  try {
+    const attendant_id = parseInt(req.query.attendant_id, 10);
+    if (!Number.isFinite(attendant_id) || attendant_id <= 0) {
+      return res.status(400).json({ error: 'attendant_id is required' });
+    }
+    const { from_date, to_date } = req.query;
+    let sql = `
+      SELECT nr.id, nr.attendant_id, nr.nozzle_id, nr.reading_date,
+             nr.opening_reading, nr.closing_reading, nr.opening_at, nr.closing_at,
+             (CASE WHEN nr.closing_reading IS NOT NULL THEN (nr.closing_reading - nr.opening_reading) ELSE NULL END) AS sale_liters,
+             a.name AS attendant_name, n.name AS nozzle_name
+      FROM nozzle_readings nr
+      JOIN attendants a ON a.id = nr.attendant_id
+      JOIN nozzles n ON n.id = nr.nozzle_id
+      WHERE nr.attendant_id = ?
+    `;
+    const params = [attendant_id];
+    if (from_date) {
+      sql += ' AND nr.reading_date >= ?';
+      params.push(from_date);
+    }
+    if (to_date) {
+      sql += ' AND nr.reading_date <= ?';
+      params.push(to_date);
+    }
+    sql += ' ORDER BY nr.reading_date ASC, nr.opening_at ASC, nr.id ASC';
+
+    const [rows] = await pool.execute(sql, params);
+    const normalized = (rows || []).map((r) => ({
+      id: r.id,
+      attendant_id: r.attendant_id,
+      nozzle_id: r.nozzle_id,
+      reading_date: r.reading_date,
+      opening_reading: r.opening_reading != null ? parseFloat(r.opening_reading) : null,
+      closing_reading: r.closing_reading != null ? parseFloat(r.closing_reading) : null,
+      opening_at: r.opening_at,
+      closing_at: r.closing_at,
+      sale_liters: r.sale_liters != null ? parseFloat(r.sale_liters) : null,
+      attendant_name: r.attendant_name,
+      nozzle_name: r.nozzle_name,
+      completed: r.closing_reading != null
+    }));
+
+    const totals = normalized.reduce(
+      (acc, r) => {
+        acc.shifts += 1;
+        if (r.completed) acc.completed_shifts += 1;
+        acc.total_liters += r.sale_liters != null ? r.sale_liters : 0;
+        return acc;
+      },
+      { shifts: 0, completed_shifts: 0, total_liters: 0 }
+    );
+
+    res.json({ shifts: normalized, summary: totals });
+  } catch (error) {
+    console.error('Attendant history report error:', error);
+    res.status(500).json({ error: 'Failed to load attendant history' });
+  }
+});
+
+/**
+ * One nozzle over a date range: shifts in order (by calendar day, then opening time).
+ * Query: nozzle_id (required), from_date + to_date (YYYY-MM-DD), or reading_date alone for one day.
+ */
+router.get('/report/nozzle-daily', authenticateToken, async (req, res) => {
+  try {
+    const nozzle_id = parseInt(req.query.nozzle_id, 10);
+    if (!Number.isFinite(nozzle_id) || nozzle_id <= 0) {
+      return res.status(400).json({ error: 'nozzle_id is required' });
+    }
+    let fromStr = req.query.from_date && String(req.query.from_date).trim().slice(0, 10);
+    let toStr = req.query.to_date && String(req.query.to_date).trim().slice(0, 10);
+    if ((!fromStr || !toStr) && req.query.reading_date) {
+      const d = String(req.query.reading_date).trim().slice(0, 10);
+      fromStr = d;
+      toStr = d;
+    }
+    if (!fromStr || !toStr) {
+      return res.status(400).json({
+        error: 'from_date and to_date are required (YYYY-MM-DD), or use reading_date for a single day'
+      });
+    }
+    if (fromStr > toStr) {
+      return res.status(400).json({ error: 'from_date cannot be after to_date' });
+    }
+
+    const [rows] = await pool.execute(
+      `SELECT nr.id, nr.attendant_id, nr.nozzle_id, nr.reading_date,
+              nr.opening_reading, nr.closing_reading, nr.opening_at, nr.closing_at,
+              (CASE WHEN nr.closing_reading IS NOT NULL THEN (nr.closing_reading - nr.opening_reading) ELSE NULL END) AS sale_liters,
+              a.name AS attendant_name, n.name AS nozzle_name
+       FROM nozzle_readings nr
+       JOIN attendants a ON a.id = nr.attendant_id
+       JOIN nozzles n ON n.id = nr.nozzle_id
+       WHERE nr.nozzle_id = ? AND nr.reading_date >= ? AND nr.reading_date <= ?
+       ORDER BY nr.reading_date ASC, nr.opening_at ASC, nr.id ASC`,
+      [nozzle_id, fromStr, toStr]
+    );
+
+    const shifts = (rows || []).map((r, idx) => ({
+      sequence: idx + 1,
+      id: r.id,
+      attendant_id: r.attendant_id,
+      attendant_name: r.attendant_name,
+      nozzle_id: r.nozzle_id,
+      nozzle_name: r.nozzle_name,
+      reading_date: r.reading_date,
+      opening_reading: r.opening_reading != null ? parseFloat(r.opening_reading) : null,
+      closing_reading: r.closing_reading != null ? parseFloat(r.closing_reading) : null,
+      opening_at: r.opening_at,
+      closing_at: r.closing_at,
+      sale_liters: r.sale_liters != null ? parseFloat(r.sale_liters) : null,
+      completed: r.closing_reading != null
+    }));
+
+    const totalLiters = shifts.reduce((s, r) => s + (r.sale_liters != null ? r.sale_liters : 0), 0);
+
+    res.json({
+      nozzle_id,
+      from_date: fromStr,
+      to_date: toStr,
+      reading_date: fromStr === toStr ? fromStr : undefined,
+      shifts,
+      summary: {
+        shift_count: shifts.length,
+        completed_count: shifts.filter((s) => s.completed).length,
+        total_liters: totalLiters
+      }
+    });
+  } catch (error) {
+    console.error('Nozzle daily report error:', error);
+    res.status(500).json({ error: 'Failed to load nozzle daily report' });
+  }
+});
+
 // List daily nozzle readings (filter by date range, nozzle_id, attendant_id)
 router.get('/', authenticateToken, async (req, res) => {
   try {

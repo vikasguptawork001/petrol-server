@@ -392,35 +392,108 @@ router.patch('/buyers/:id/restore', authenticateToken, authorizeRole('admin', 's
   }
 });
 
-// Get all seller parties
+// Get seller parties — optional paginated mode (when `limit` is sent), DB search, balance filter
 router.get('/sellers', authenticateToken, async (req, res) => {
   try {
-    const { page = 1, limit = 10000, include_archived = false } = req.query;
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10000;
-    const offset = (pageNum - 1) * limitNum;
-    // Seller list: do not filter by is_archived (column may be missing in seller_parties)
-    const whereClause = '';
+    const {
+      page = 1,
+      limit: limitQ,
+      search = '',
+      balance = 'all',
+      include_archived = false
+    } = req.query;
 
-    // Get total count
-    const [countResult] = await pool.execute(
-      `SELECT COUNT(*) as total FROM seller_parties ${whereClause}`
+    /** Legacy callers omit `limit` and expect up to 10k rows in one response. */
+    const hasLimitParam =
+      Object.prototype.hasOwnProperty.call(req.query, 'limit') && req.query.limit !== '';
+    const limitNum = hasLimitParam
+      ? Math.min(100, Math.max(5, parseInt(limitQ, 10) || 25))
+      : 10000;
+    const pageNum = hasLimitParam ? Math.max(1, parseInt(page, 10) || 1) : 1;
+    const offset = hasLimitParam ? (pageNum - 1) * limitNum : 0;
+
+    const params = [];
+    let where = 'WHERE 1=1';
+
+    /** Paginated UI excludes archived; legacy callers (no `limit`) keep old behaviour and see all rows. */
+    if (
+      hasLimitParam &&
+      include_archived !== 'true' &&
+      include_archived !== true &&
+      include_archived !== '1'
+    ) {
+      where += ' AND (is_archived IS NULL OR is_archived = 0)';
+    }
+
+    if (balance === 'owing') {
+      where += ' AND balance_amount > 0.009';
+    } else if (balance === 'settled') {
+      where += ' AND (balance_amount IS NULL OR balance_amount <= 0.009)';
+    }
+
+    const searchTrim = search && String(search).trim();
+    if (searchTrim) {
+      const q = `%${searchTrim}%`;
+      where += ` AND (
+        party_name LIKE ? OR
+        mobile_number LIKE ? OR
+        IFNULL(email,'') LIKE ? OR
+        IFNULL(address,'') LIKE ? OR
+        IFNULL(gst_number,'') LIKE ? OR
+        IFNULL(cheque_number,'') LIKE ? OR
+        IFNULL(bank_name,'') LIKE ?
+      )`;
+      params.push(q, q, q, q, q, q, q);
+    }
+
+    const [aggRows] = await pool.execute(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(balance_amount), 0) AS sum_balance
+       FROM seller_parties ${where}`,
+      params
     );
-    const totalRecords = countResult[0].total;
-    const totalPages = Math.ceil(totalRecords / limitNum);
+    const totalRecords = aggRows[0].total || 0;
+    const totalOutstandingFiltered = parseFloat(aggRows[0].sum_balance || 0);
+    const totalPages = hasLimitParam
+      ? Math.max(1, Math.ceil(totalRecords / limitNum) || 1)
+      : 1;
 
-    // Get paginated data
+    const archiveOnlyActive = hasLimitParam
+      ? 'WHERE (is_archived IS NULL OR is_archived = 0)'
+      : 'WHERE 1=1';
+    const [onFileRows] = await pool.execute(
+      `SELECT COUNT(*) AS c FROM seller_parties ${archiveOnlyActive}`
+    );
+    const totalOnFile = onFileRows[0].c || 0;
+
+    const owingWhere = hasLimitParam
+      ? 'WHERE balance_amount > 0.009 AND (is_archived IS NULL OR is_archived = 0)'
+      : 'WHERE balance_amount > 0.009';
+    const [owingRows] = await pool.execute(`SELECT COUNT(*) AS c FROM seller_parties ${owingWhere}`);
+    const owingCountGlobal = owingRows[0].c || 0;
+
+    /** Integers inlined: MySQL/Railway often rejects LIMIT ? / OFFSET ? in prepared statements (ER_WRONG_ARGUMENTS). */
+    const safeLimit = Math.min(
+      10000,
+      Math.max(1, Math.floor(Number(limitNum)) || (hasLimitParam ? 25 : 10000))
+    );
+    const safeOffset = Math.max(0, Math.floor(Number(offset)) || 0);
     const [parties] = await pool.execute(
-      `SELECT * FROM seller_parties ${whereClause} ORDER BY party_name LIMIT ${limitNum} OFFSET ${offset}`
+      `SELECT * FROM seller_parties ${where} ORDER BY party_name ASC LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
     );
-    
-    res.json({ 
+
+    res.json({
       parties,
       pagination: {
         page: pageNum,
         limit: limitNum,
         totalRecords,
         totalPages
+      },
+      summary: {
+        totalOutstanding: totalOutstandingFiltered,
+        totalOnFile,
+        owingCountGlobal
       }
     });
   } catch (error) {
