@@ -216,7 +216,8 @@ router.get('/payment/:id/pdf', authenticateToken, async (req, res) => {
       updated_balance: unifiedTransaction.balance_after,
       payment_method: unifiedTransaction.payment_method || 'Cash',
       notes: unifiedTransaction.notes,
-      party_type: unifiedTransaction.party_type
+      party_type: unifiedTransaction.party_type,
+      new_due_date: unifiedTransaction.new_due_date
     };
 
     const party = {
@@ -472,7 +473,8 @@ router.get('/payment/:id/receipt', authenticateToken, async (req, res) => {
       updated_balance: unifiedTransaction.balance_after,
       payment_method: unifiedTransaction.payment_method || 'Cash',
       notes: unifiedTransaction.notes,
-      party_type: unifiedTransaction.party_type
+      party_type: unifiedTransaction.party_type,
+      new_due_date: unifiedTransaction.new_due_date
     };
 
     const party = {

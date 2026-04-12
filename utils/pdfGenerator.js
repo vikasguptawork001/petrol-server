@@ -47,6 +47,13 @@ const formatCurrency = (amount) => {
   return parseFloat(amount).toFixed(2);
 };
 
+const formatBillDateDDMMYYYY = (d) => {
+  if (!d) return '';
+  const x = new Date(d);
+  if (Number.isNaN(x.getTime())) return String(d);
+  return x.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
 /** Unit shown on bill lines: prefers snapshot on sale_items, then items master, then PCS */
 const formatLineUnitForPdf = (item) => {
   const raw =
@@ -55,11 +62,11 @@ const formatLineUnitForPdf = (item) => {
       : item.unit != null && String(item.unit).trim() !== ''
         ? String(item.unit).trim()
         : 'PCS';
-  return raw.length > 14 ? `${raw.slice(0, 12)}…` : raw;
+  return raw.length > 14 ? `${raw.slice(0, 12)}...` : raw;
 };
 
 const summarizeUnitsForBillTotals = (items) => {
-  const labels = items.map((i) => formatLineUnitForPdf(i).replace(/…$/, ''));
+  const labels = items.map((i) => formatLineUnitForPdf(i).replace(/\.\.\.$/, ''));
   const uniq = [...new Set(labels)];
   if (uniq.length === 1) return uniq[0];
   return 'mixed';
@@ -316,7 +323,7 @@ const generateBillPDF = (transaction, items, res) => {
         { x: margin + 197, width: 30, label: 'Qty', align: 'right' },
         { x: margin + 227, width: 30, label: 'Unit', align: 'center' },
         { x: margin + 257, width: 50, label: 'MRP', align: 'right' },
-        { x: margin + 307, width: 40, label: 'Disc(₹)', align: 'right' },
+        { x: margin + 307, width: 40, label: 'Discount', align: 'right' },
         { x: margin + 342, width: 50, label: 'Price', align: 'right' },
         { x: margin + 392, width: 48, label: 'Tax Rate', align: 'center' },
         { x: margin + 440, width: 75, label: 'Amount', align: 'right' }
@@ -329,7 +336,7 @@ const generateBillPDF = (transaction, items, res) => {
         { x: margin + 205, width: 30, label: 'Qty', align: 'right' },
         { x: margin + 235, width: 30, label: 'Unit', align: 'center' },
         { x: margin + 265, width: 50, label: 'MRP', align: 'right' },
-        { x: margin + 315, width: 40, label: 'Disc(₹)', align: 'right' },
+        { x: margin + 315, width: 40, label: 'Discount', align: 'right' },
         { x: margin + 350, width: 50, label: 'Price', align: 'right' },
         { x: margin + 400, width: 115, label: 'Amount', align: 'right' } // Wider amount column
       ];
@@ -495,8 +502,8 @@ const generateBillPDF = (transaction, items, res) => {
     
     // Calculate rounding on the unrounded grand total
     // roundedOff = rounded value - unrounded value
-    // If positive: we rounded up (added to customer) → show '+'
-    // If negative: we rounded down (subtracted from customer) → show '-'
+    // If positive: we rounded up (added to customer) -> show '+'
+    // If negative: we rounded down (subtracted from customer) -> show '-'
     const roundedOff = Math.round(unroundedGrandTotal) - unroundedGrandTotal;
     const finalGrandTotal = Math.round(unroundedGrandTotal);
     
@@ -540,8 +547,8 @@ const generateBillPDF = (transaction, items, res) => {
     
     // Rounded off
     // roundedOff = Math.round(unroundedGrandTotal) - unroundedGrandTotal
-    // If roundedOff > 0: rounded value is higher (we rounded UP, adding to customer) → show '+'
-    // If roundedOff < 0: rounded value is lower (we rounded DOWN, subtracting from customer) → show '-'
+    // If roundedOff > 0: rounded value is higher (we rounded UP, adding to customer) -> show '+'
+    // If roundedOff < 0: rounded value is lower (we rounded DOWN, subtracting from customer) -> show '-'
     // Show rounding if absolute value is greater than 0.001 (to catch small rounding differences)
     if (Math.abs(roundedOff) > 0.001) {
       doc.fontSize(8).font('Helvetica');
@@ -610,17 +617,11 @@ const generateBillPDF = (transaction, items, res) => {
     doc.text(`Rs.${formatCurrency(balanceDue)}`, rightEdge - 80, currentY, { width: 80, align: 'right' });
     currentY += 20;
 
-    const payStat = String(transaction.payment_status || '').toLowerCase();
     const creditDue = transaction.bill_due_date;
-    if (payStat === 'partially_paid' && creditDue) {
+    if (creditDue) {
       doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
-      doc.text('Credit due date:', margin, currentY);
-      const dueLabel = new Date(creditDue).toLocaleDateString('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
+      doc.text('Next due date:', margin, currentY);
+      const dueLabel = formatBillDateDDMMYYYY(creditDue);
       doc.text(dueLabel, rightEdge - 120, currentY, { width: 120, align: 'right' });
       currentY += 16;
     }
@@ -1148,19 +1149,21 @@ const generatePaymentReceiptPDF = (paymentTransaction, party, res) => {
       textY += 12;
     });
     
+    const previousBalance = parseFloat(paymentTransaction.previous_balance) || 0;
+    const paymentAmount = parseFloat(paymentTransaction.amount) || 0;
+    const updatedBalance = parseFloat(paymentTransaction.updated_balance) || 0;
+    const showNextDue = updatedBalance > 0.009 && paymentTransaction.new_due_date;
+    const summaryRectHeight = showNextDue ? 120 : 100;
+
     // ========== PAYMENT SUMMARY ==========
     currentY = currentY + boxHeight + 20;
-    doc.rect(margin, currentY, contentWidth, 100).stroke();
+    doc.rect(margin, currentY, contentWidth, summaryRectHeight).stroke();
     
     doc.fontSize(10).font('Helvetica-Bold');
     doc.text('PAYMENT SUMMARY', margin + 5, currentY + 10, { width: contentWidth - 10, align: 'center' });
     
     currentY += 30;
     doc.fontSize(9).font('Helvetica');
-    
-    const previousBalance = parseFloat(paymentTransaction.previous_balance) || 0;
-    const paymentAmount = parseFloat(paymentTransaction.amount) || 0;
-    const updatedBalance = parseFloat(paymentTransaction.updated_balance) || 0;
     
     doc.font('Helvetica-Bold').text('Previous Balance:', margin + 20, currentY);
     doc.font('Helvetica').text(`Rs.${formatCurrency(previousBalance)}`, rightEdge - 100, currentY, { width: 80, align: 'right' });
@@ -1177,6 +1180,17 @@ const generatePaymentReceiptPDF = (paymentTransaction, party, res) => {
     doc.text('Updated Balance:', margin + 20, currentY);
     doc.text(`Rs.${formatCurrency(updatedBalance)}`, rightEdge - 100, currentY, { width: 80, align: 'right' });
     
+    if (showNextDue) {
+      currentY += 20;
+      doc.fontSize(9).font('Helvetica-Bold');
+      doc.text('Next due date:', margin + 20, currentY);
+      doc.font('Helvetica').text(
+        formatBillDateDDMMYYYY(paymentTransaction.new_due_date),
+        rightEdge - 100,
+        currentY,
+        { width: 80, align: 'right' }
+      );
+    }
     currentY += 30;
     
     // Amount in words
@@ -1224,7 +1238,7 @@ const generatePaymentReceiptPDF = (paymentTransaction, party, res) => {
       width: signBoxWidth, 
       align: 'center' 
     });
-    
+
     // Add final page numbers before ending
     pageNumberHelper.addFinalPageNumbers();
     
@@ -1584,17 +1598,19 @@ const generatePaymentReceiptSmallPDF = (paymentTransaction, party, res) => {
     
     currentY += 110;
 
+    const previousBalance = parseFloat(paymentTransaction.previous_balance) || 0;
+    const paymentAmount = parseFloat(paymentTransaction.amount) || 0;
+    const updatedBalance = parseFloat(paymentTransaction.updated_balance) || 0;
+    const showNextDueSmall = updatedBalance > 0.009 && paymentTransaction.new_due_date;
+    const summaryBoxH = showNextDueSmall ? 100 : 80;
+
     // Payment Summary Box
-    doc.rect(margin, currentY, contentWidth, 80).stroke();
+    doc.rect(margin, currentY, contentWidth, summaryBoxH).stroke();
     doc.fontSize(9).font('Helvetica-Bold');
     doc.text('Payment Summary:', margin + 5, currentY + 5);
     
     doc.fontSize(8).font('Helvetica');
     textY = currentY + 18;
-    
-    const previousBalance = parseFloat(paymentTransaction.previous_balance) || 0;
-    const paymentAmount = parseFloat(paymentTransaction.amount) || 0;
-    const updatedBalance = parseFloat(paymentTransaction.updated_balance) || 0;
     
     doc.font('Helvetica-Bold').text('Previous Balance:', margin + 5, textY);
     doc.font('Helvetica').text(`Rs.${formatCurrency(previousBalance)}`, rightEdge - 100, textY, { width: 80, align: 'right' });
@@ -1611,7 +1627,19 @@ const generatePaymentReceiptSmallPDF = (paymentTransaction, party, res) => {
     doc.text('Updated Balance:', margin + 5, textY);
     doc.text(`Rs.${formatCurrency(updatedBalance)}`, rightEdge - 100, textY, { width: 80, align: 'right' });
     
-    currentY += 90;
+    if (showNextDueSmall) {
+      textY += 16;
+      doc.fontSize(8).font('Helvetica-Bold');
+      doc.text('Next due date:', margin + 5, textY);
+      doc.font('Helvetica').text(
+        formatBillDateDDMMYYYY(paymentTransaction.new_due_date),
+        rightEdge - 100,
+        textY,
+        { width: 80, align: 'right' }
+      );
+    }
+    
+    currentY += summaryBoxH + 10;
 
     // Amount in words
     doc.rect(margin, currentY, contentWidth, 20).stroke();

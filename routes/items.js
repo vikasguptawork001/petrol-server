@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { validateItem } = require('../middleware/validation');
 const { getLocalISOString } = require('../utils/dateUtils');
+const { validateItemRatesConsistency } = require('../utils/itemRateValidation');
 const { uploadImage: uploadToCloudinary } = require('../utils/cloudinary');
 
 const router = express.Router();
@@ -419,12 +420,8 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin', 'sales
       return res.status(400).json({ error: 'Quantity must be a non-negative number' });
     }
 
-    // Validate sale_rate >= purchase_rate
     const saleRateNum = parseFloat(sale_rate);
     const purchaseRateNum = parseFloat(purchase_rate);
-    if (saleRateNum < purchaseRateNum) {
-      return res.status(400).json({ error: 'Sale rate must be greater than or equal to purchase rate' });
-    }
 
     // Validate remarks length
     if (remarks && remarks.length > 200) {
@@ -437,6 +434,15 @@ router.post('/', authenticateToken, authorizeRole('admin', 'super_admin', 'sales
       : parseFloat(min_sale_rate);
     if (minSaleRateValue !== null && (isNaN(minSaleRateValue) || minSaleRateValue < 0)) {
       return res.status(400).json({ error: 'Min sale rate must be 0 or greater, or empty' });
+    }
+
+    const ratesPost = validateItemRatesConsistency({
+      saleRate: saleRateNum,
+      purchaseRate: purchaseRateNum,
+      minSaleRate: minSaleRateValue
+    });
+    if (!ratesPost.ok) {
+      return res.status(400).json({ error: ratesPost.error });
     }
 
     // Check for duplicates (Product Name, Brand combination)
@@ -608,15 +614,23 @@ router.patch('/:id', authenticateToken, authorizeRole('admin', 'super_admin', 's
       params.push(purchase_rate);
     }
 
-    // Validate sale_rate >= purchase_rate if both are being updated or one is being updated
     const finalSaleRate = sale_rate !== undefined ? sale_rate : existingItem.sale_rate;
     const finalPurchaseRate = purchase_rate !== undefined ? purchase_rate : existingItem.purchase_rate;
-    if (finalPurchaseRate !== undefined && finalPurchaseRate !== null && !isNaN(finalPurchaseRate)) {
-      const saleRateNum = parseFloat(finalSaleRate);
-      const purchaseRateNum = parseFloat(finalPurchaseRate);
-      if (saleRateNum < purchaseRateNum) {
-        return res.status(400).json({ error: 'Sale rate must be greater than or equal to purchase rate' });
-      }
+    let finalMinSale;
+    if (min_sale_rate !== undefined) {
+      finalMinSale = min_sale_rate === null || min_sale_rate === '' ? null : parseFloat(min_sale_rate);
+    } else {
+      const ex = existingItem.min_sale_rate;
+      finalMinSale = ex === undefined || ex === null || ex === '' ? null : parseFloat(ex);
+    }
+
+    const ratesPatch = validateItemRatesConsistency({
+      saleRate: finalSaleRate,
+      purchaseRate: finalPurchaseRate,
+      minSaleRate: finalMinSale
+    });
+    if (!ratesPatch.ok) {
+      return res.status(400).json({ error: ratesPatch.error });
     }
 
     // Check for duplicates only if product_name or brand are being updated
