@@ -76,23 +76,34 @@ app.use('/api/attendants', attendantRoutes);
 app.use('/api/nozzle-readings', nozzleReadingsRoutes);
 app.use('/api/expenses', expensesRoutes);
 
-// Health check
+// Health check (includes MySQL session TZ — must be +05:30 for IST business rules)
 app.get('/api/health', async (req, res) => {
   try {
     const pool = require('./config/database');
     await pool.execute('SELECT 1');
-    res.json({ 
-      status: 'OK', 
+    const [tzRows] = await pool.execute(
+      "SELECT @@session.time_zone AS session_tz, @@global.time_zone AS global_tz, NOW() AS db_now"
+    );
+    const tz = tzRows[0] || {};
+    res.json({
+      status: 'OK',
       message: 'Server is running',
       database: 'connected',
-      timestamp: getLocalISOString()
+      timestamp: getLocalISOString(),
+      timezone: {
+        app_business_calendar: 'Asia/Kolkata (IST)',
+        mysql_session_time_zone: tz.session_tz,
+        mysql_global_time_zone: tz.global_tz,
+        mysql_now: tz.db_now,
+        note: 'Pool sets session time_zone to +05:30; API timestamps use dateUtils (IST).',
+      },
     });
   } catch (error) {
-    res.status(503).json({ 
-      status: 'ERROR', 
+    res.status(503).json({
+      status: 'ERROR',
       message: 'Server is running but database connection failed',
       database: 'disconnected',
-      timestamp: getLocalISOString()
+      timestamp: getLocalISOString(),
     });
   }
 });

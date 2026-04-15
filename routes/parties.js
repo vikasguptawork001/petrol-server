@@ -721,6 +721,7 @@ router.patch('/sellers/:id', authenticateToken, authorizeRole('admin', 'super_ad
       address,
       opening_balance,
       closing_balance,
+      balance_amount,
       gst_number,
       due_date,
       vehicle_number,
@@ -767,6 +768,11 @@ router.patch('/sellers/:id', authenticateToken, authorizeRole('admin', 'super_ad
     if (closing_balance !== undefined) {
       updateFields.push('closing_balance = ?');
       params.push(closing_balance);
+    }
+
+    if (balance_amount !== undefined && req.user.role === 'super_admin') {
+      updateFields.push('balance_amount = ?');
+      params.push(parseFloat(balance_amount) || 0);
     }
 
     if (gst_number !== undefined) {
