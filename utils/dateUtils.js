@@ -51,8 +51,18 @@ const getLocalISOString = (date = new Date()) => {
 
 /**
  * MySQL DATETIME string in IST: YYYY-MM-DD HH:mm:ss
+ * When the client sends `getLocalISOString()` (YYYY-MM-DDTHH:mm:ss — IST wall time, no Z),
+ * do not parse with `new Date(str)` on the server: Node may interpret that in the host TZ.
+ * Strip to MySQL format so stored times match what the user picked.
  */
 const formatISTDateTimeForMySQL = (date = new Date()) => {
+  if (typeof date === 'string') {
+    const m = date.trim().match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (m) {
+      const [, y, mo, d, h, mi, se] = m;
+      return `${y}-${mo}-${d} ${h}:${mi}:${se}`;
+    }
+  }
   const d = new Date(date);
   if (Number.isNaN(d.getTime())) return formatISTDateTimeForMySQL(new Date());
   const parts = collectParts(d, {

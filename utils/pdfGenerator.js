@@ -54,6 +54,23 @@ const formatBillDateDDMMYYYY = (d) => {
   return x.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
+/**
+ * MySQL DATETIME strings without timezone are stored as IST business time.
+ * Parse as +05:30 so PDF "Date & Time" matches India wall clock (same as web UI).
+ */
+const parseMysqlDatetimeAsIST = (input) => {
+  if (input == null || input === '') return new Date();
+  if (input instanceof Date) return input;
+  const str = String(input).trim();
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (m) {
+    const [, y, mo, d, h, mi, se] = m;
+    return new Date(`${y}-${mo}-${d}T${h}:${mi}:${se}+05:30`);
+  }
+  const t = new Date(str);
+  return Number.isNaN(t.getTime()) ? new Date() : t;
+};
+
 /** Unit shown on bill lines: prefers snapshot on sale_items, then items master, then PCS */
 const formatLineUnitForPdf = (item) => {
   const raw =
@@ -294,7 +311,7 @@ const generateBillPDF = (transaction, items, res) => {
     const labelWidth = 90;
     const details = [
       ['Invoice No.:', transaction.bill_number],
-      ['Dated:', new Date(transaction.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })],
+      ['Dated:', parseMysqlDatetimeAsIST(transaction.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })],
       ['Place of Supply:', 'Bihar']
     ];
     if (transaction.attendant_name) {
@@ -1127,7 +1144,7 @@ const generatePaymentReceiptPDF = (paymentTransaction, party, res) => {
     
     // Use created_at for full timestamp, fallback to payment_date if not available
     const paymentDateTime = paymentTransaction.created_at || paymentTransaction.payment_date;
-    const formattedDateTime = new Date(paymentDateTime).toLocaleString('en-GB', {
+    const formattedDateTime = parseMysqlDatetimeAsIST(paymentDateTime).toLocaleString('en-GB', {
       timeZone: 'Asia/Kolkata',
       year: 'numeric',
       month: '2-digit',
@@ -1581,7 +1598,7 @@ const generatePaymentReceiptSmallPDF = (paymentTransaction, party, res) => {
     textY += 12;
     // Use created_at for full timestamp, fallback to payment_date if not available
     const paymentDateTime = paymentTransaction.created_at || paymentTransaction.payment_date;
-    const formattedDateTime = new Date(paymentDateTime).toLocaleString('en-GB', {
+    const formattedDateTime = parseMysqlDatetimeAsIST(paymentDateTime).toLocaleString('en-GB', {
       timeZone: 'Asia/Kolkata',
       year: 'numeric',
       month: '2-digit',
