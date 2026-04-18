@@ -6,6 +6,29 @@ const { getLocalDateString } = require('../utils/dateUtils');
 
 const router = express.Router();
 
+/** System-reserved parties: cannot archive/delete; display name must not change (APIs depend on these). */
+const PROTECTED_SELLER_PARTY_NAMES = new Set(['quick_sell']);
+const PROTECTED_BUYER_PARTY_NAMES = new Set(['Retail Buyer']);
+
+function isProtectedSellerParty(party) {
+  return party?.party_name != null && PROTECTED_SELLER_PARTY_NAMES.has(String(party.party_name).trim());
+}
+
+function isProtectedBuyerParty(party) {
+  return party?.party_name != null && PROTECTED_BUYER_PARTY_NAMES.has(String(party.party_name).trim());
+}
+
+/** Only the seeded system row may use this name (Quick bill / sellers/retail). */
+function isReservedQuickSellSupplierName(name) {
+  return String(name || '').trim().toLowerCase() === 'quick_sell';
+}
+
+function isValidTenDigitMobileOptional(mobile) {
+  const m = mobile == null ? '' : String(mobile).trim();
+  if (m === '') return true;
+  return /^[0-9]{10}$/.test(m);
+}
+
 async function ensureBuyerBankColumns() {
   const [rows] = await pool.execute(`
     SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -248,6 +271,16 @@ router.patch('/buyers/:id', authenticateToken, authorizeRole('admin', 'super_adm
       return res.status(400).json({ error: 'Cannot update archived buyer party. Please restore it first.' });
     }
 
+    if (
+      isProtectedBuyerParty(existingParty) &&
+      party_name !== undefined &&
+      String(party_name).trim() !== String(existingParty.party_name).trim()
+    ) {
+      return res.status(400).json({
+        error: 'Cannot rename the reserved Retail Buyer party (used by the system for default sales).'
+      });
+    }
+
     const updateFields = [];
     const params = [];
 
@@ -354,6 +387,12 @@ router.delete('/buyers/:id', authenticateToken, authorizeRole('admin', 'super_ad
     // Check if already archived
     if (party.is_archived) {
       return res.status(400).json({ error: 'Buyer party is already archived' });
+    }
+
+    if (isProtectedBuyerParty(party)) {
+      return res.status(403).json({
+        error: 'This buyer party is reserved for the system (Retail Buyer) and cannot be deleted.'
+      });
     }
 
     // Archive the party (soft delete)
@@ -665,6 +704,13 @@ router.post('/sellers', authenticateToken, authorizeRole('admin', 'super_admin')
       bank_name
     } = req.body;
 
+    if (isReservedQuickSellSupplierName(party_name)) {
+      return res.status(400).json({
+        error:
+          'The supplier name "quick_sell" is reserved for Quick bill / quick sale. Choose a different name.'
+      });
+    }
+
     // Validate GST number (alphanumeric, max 20 chars)
     if (gst_number && (gst_number.length > 20 || !/^[A-Za-z0-9]+$/.test(gst_number))) {
       return res.status(400).json({ error: 'GST number must be alphanumeric and maximum 20 characters' });
@@ -739,6 +785,32 @@ router.patch('/sellers/:id', authenticateToken, authorizeRole('admin', 'super_ad
     // Check if party is archived
     if (existingParty.is_archived) {
       return res.status(400).json({ error: 'Cannot update archived seller party. Please restore it first.' });
+    }
+
+    if (
+      isProtectedSellerParty(existingParty) &&
+      party_name !== undefined &&
+      String(party_name).trim() !== String(existingParty.party_name).trim()
+    ) {
+      return res.status(400).json({
+        error:
+          'Cannot rename the reserved Quick bill supplier (party name must stay "quick_sell" for dashboard quick sale).'
+      });
+    }
+
+    if (
+      party_name !== undefined &&
+      isReservedQuickSellSupplierName(party_name) &&
+      !isProtectedSellerParty(existingParty)
+    ) {
+      return res.status(400).json({
+        error:
+          'The supplier name "quick_sell" is reserved for Quick bill / quick sale and cannot be used.'
+      });
+    }
+
+    if (mobile_number !== undefined && !isValidTenDigitMobileOptional(mobile_number)) {
+      return res.status(400).json({ error: 'Mobile number must be exactly 10 digits or empty' });
     }
 
     const updateFields = [];
@@ -853,6 +925,13 @@ router.delete('/sellers/:id', authenticateToken, authorizeRole('super_admin'), a
     // Check if already archived
     if (party.is_archived) {
       return res.status(400).json({ error: 'Seller party is already archived' });
+    }
+
+    if (isProtectedSellerParty(party)) {
+      return res.status(403).json({
+        error:
+          'This supplier is reserved for Quick bill / quick sale (name: quick_sell) and cannot be deleted.'
+      });
     }
 
     // Archive the party (soft delete)
